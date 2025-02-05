@@ -1,0 +1,222 @@
+# Dell-AITC system
+
+Every time you choose to apply a rule(s), explicitly state the rule(s) in the output.  You can abbreviate the rule description to a single word or phrase.
+
+## Project Context:
+This is a local AI-driven technology categorization system that evaluates and classifies federal AI use cases against a set of 14 AI technology categories. The backend uses FastAPI for processing, Neo4j for knowledge graph storage, and AI models (Ollama locally, OpenAI API fallback) for keyword matching, semantic evaluation, and LLM-based classification.
+
+## Context
+- "Neo4j Schema Details": "When generating Cypher queries, always follow the node properties and relationships from docs/neo4j_schema/neo4j_schema_documentation.md and docs/neo4j_schema/neo4j_schema.json
+
+## General Project Structure
+- Follow a clean, modular architecture with clearly defined layers
+- use environment variables (.env) to store API keys, DB credentials, and configurations
+- keep dependencies minimal and only install what is necessary
+- Structure repository files as follows:
+
+```
+Dell-AITC/
+│── backend/              # FastAPI backend
+│   ├── app/              # Main FastAPI app
+│   │   ├── api/          # API endpoints
+│   │   ├── models/       # Pydantic models
+│   │   ├── services/     # Business logic (Neo4j, AI processing)
+│   │   ├── config.py     # Configuration settings
+│   │   ├── main.py       # Entry point for FastAPI
+│   │   ├── dependencies.py  # Common dependencies (DB, AI models)
+│   ├── requirements.txt  # Python dependencies
+│   ├── Dockerfile        # Docker configuration for backend
+│   ├── .env              # Environment variables
+│
+│── frontend/             # Next.js frontend
+│   ├── src/              # Frontend source code
+│   │   ├── components/   # Reusable UI components
+│   │   ├── pages/        # Next.js pages (index.tsx, etc.)
+│   │   ├── styles/       # Tailwind CSS styles
+│   │   ├── utils/        # Helper functions
+│   ├── public/           # Static assets
+│   ├── package.json      # Node.js dependencies
+│   ├── next.config.js    # Next.js config
+│   ├── tailwind.config.js  # Tailwind CSS config
+│
+│── data/                 # Data storage (CSV, Excel)
+│   ├── input/            # Raw input files
+│   ├── output/           # Processed results
+│
+│── notebooks/            # Jupyter notebooks for reference
+│   ├── analysis.ipynb    # Notebook for testing AI categorization
+│
+│── docs/                 # Documentation
+│   ├── requirements.md   # Project requirements
+│   ├── design.md         # Design documents
+│   ├── implementation.md # Implementation notes
+│   ├── testing.md        # Testing strategy
+│   ├── troubleshooting.md # Troubleshooting guide
+│   ├── neo4j/            # Neo4j schema design
+|
+│── scripts/              # Experimental scripts go here
+|
+│── docker-compose.yml    # Docker configuration for running services
+│── .gitignore            # Ignore unnecessary files
+│── README.md             # Project documentation
+
+
+```
+
+## Tech Stack
+- Next.js
+- TypeScript
+- TailwindCSS
+- FastAPI
+- Python
+- Neo4j
+- Docker
+- Ollama
+- OpenAI
+- Pydantic
+- Axios
+- SWR
+- React
+- ESLint
+- Prettier
+- Black
+- dotenv
+- logging
+
+## Naming Conventions
+- Use lowercase with dashes for directories (e.g., compontents/form-wizard)
+- Favor named exports for components and utilities
+- Use PascalCase for component files (e.g., VisaForm.tsx)
+- Use camelCase for utility files (e.g., formValidator.ts)
+
+## TypeScript Usage
+- Use TypeScript for all code; prefer interfaces over types
+- Avoid enums; use const objects with 'as const' assertion
+- Use functional components with TypeScript interfaces
+- Define strict types for message passing between different parts of the extension
+- Use absolute imports for all files @/...
+- Avoid try/catch blocks unless there's good reason to translate or handle errors in that abstraction
+- Use explicit return types for all functions
+
+## State Management
+- Use React Context for global state when needed
+- Implement proper state persistence using chrome.storage (for extension)
+- Implement proper cleanup in useEffect hooks
+
+## Syntax and Formatting
+- Use "function" keyword for pure functions
+- Avoid unnecessary curly braces in conditionals
+- Use declarative JSX
+- Implement proper TypeScript discriminated unions for message types
+
+## UI and Styling
+- Use Shadcn UI and Radix for components
+- use `npx shadcn@latest add <component-name>` to add new shadcn components
+- Implement Tailwind CSS for styling
+- Consider extension-specific constraints (popup dimensions, permissions)
+- Follow Material Design guidelines for Chrome extensions
+- When adding new shadcn component, document the installation command
+
+## Performance Optimization
+- Minimize bundle size using code splitting
+- Implement proper lazy loading for non-critical components
+- Optimize content script injection
+- User proper caching strategies
+- Implement proper cleanup for event listeners and observers
+
+## Error Handling
+- Implement proper error boundaries
+
+## Testing
+- Write unit tests for utilities and components
+- Implement E2E tests for critical flows
+- Test across different Chrome versions
+- Test memory usage and performance
+
+## Security
+- Implement Content Security Policy
+- Sanitize user inputs
+- Handle sensitive data properly
+- Follow Chrome extension security best practices
+- Implement proper CORS handling
+
+## Git Usage
+Commit Message Prefixes:
+- "fix:" for bug fixes
+- "feat:" for new features
+- "perf:" for performance improvements
+- "docs:" for documentation changes
+- "style:" for formatting changes
+- "refactor:" for code refactoring
+- "test:" for adding missing tests
+- "chore:" for maintenance tasks
+
+Rules:
+- Use lowercase for commit messages
+- Keep the summary line consise (50-72 characters)
+- Include description for non-obvious changes
+- Reference issue numbers when applicable
+
+## Documentation
+- Maintain clear README with setup instructions
+- Document API interactions and data flows
+- Keep manifest.json well-documented
+- Include comments for complex logic
+- Document permission requirements
+
+## Development Workflow
+- Use proper version control
+- Implement proper code review process
+- Test in multiple environments
+- Follow semantic versioning for releases
+- Maintain changelog
+
+## Cursor Specific
+- Automatically suggest additions for .cursorrules files where best practices are used during the generation
+- When you are not sure about the rule, you can ask the user for clarification
+- Prioritize using Neo4j best practices when generating Cypher queries.
+- When creating new FastAPI endpoints, ensure API routes match existing Neo4j structures.
+
+
+## Python (FastAPI) Backend Guidelines
+- Follow PEP 8 coding style (use black for formatting).
+- Use async functions wherever possible for improved performance.
+- Structure backend with separate directories for:
+	- api/ → FastAPI routes
+	- models/ → Pydantic models
+	- services/ → Business logic (Neo4j queries, AI processing)
+	- dependencies.py → Common app dependencies (DB connections, AI model loaders).
+- Define API routes clearly in api/ with proper request validation via Pydantic.
+- Use dependency injection in FastAPI to manage database and AI services efficiently.
+- Implement logging instead of print statements (use logging module).
+- Use type hints to improve readability and prevent errors.
+- Write unit tests for critical functions (especially AI processing and Neo4j queries).
+
+## Neo4j Database Guidelines
+- Use the official neo4j-driver package instead of raw queries when possible.
+- Optimize queries with indexes and relationships to improve performance.
+- Use batch processing when inserting or updating multiple nodes/relationships.
+- Avoid deeply nested queries—break them into smaller functions for clarity.
+
+## AI Processing Guidelines (Ollama + OpenAI API)
+- Use Ollama for local AI inference first, then fallback to OpenAI API if necessary.
+- Keep AI logic in services/ai_processing.py to separate concerns.
+- Ensure API calls have proper error handling and rate limiting.
+- Cache results when possible to avoid redundant API calls.
+- Log AI decision-making steps for debugging and transparency.
+
+## Next.js (Frontend) Guidelines
+- Use TypeScript for better type safety.
+- Follow a component-based structure (components/ for reusable UI elements).
+- Use Tailwind CSS for styling, avoid inline styles.
+- Use React hooks properly (useState, useEffect, useContext where needed).
+- API calls should be centralized in utils/api.ts for easier maintenance.
+- Use SWR or React Query for efficient API data fetching and caching.
+- Implement error boundaries for handling unexpected frontend errors gracefully.
+
+## DevOps & Code Management Guidelines
+- Use GitHub for version control with clear commit messages.
+- Enforce linting (black for Python, eslint + prettier for Next.js).
+- Use Docker for containerized deployment of Neo4j, FastAPI, and Next.js.
+- Create a .cursorrules file to enforce directory structure and auto-formatting.
+
