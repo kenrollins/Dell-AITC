@@ -1,6 +1,9 @@
 # Neo4j Database Schema Documentation
+
 ## Overview
+
 ### Node Summary
+
 | Label | Count |
 |-------|-------|
 | AICategory | 14 |
@@ -19,6 +22,7 @@
 | System | 322 |
 
 ### Relationship Summary
+
 | Type | Count |
 |------|-------|
 | BELONGS_TO | 14 |
@@ -34,10 +38,10 @@
 | HAS_PURPOSE | 2,213 |
 | PRODUCES | 2,074 |
 
-
 ## Node Labels and Properties
 
 ### AICategory
+
 | Property | Type |
 |----------|------|
 | id | str |
@@ -50,26 +54,31 @@
 | zone | str |
 
 ### Keyword
+
 | Property | Type |
 |----------|------|
 | name | str |
 
 ### Capability
+
 | Property | Type |
 |----------|------|
 | name | str |
 
 ### Zone
+
 | Property | Type |
 |----------|------|
 | name | str |
 
 ### IntegrationPattern
+
 | Property | Type |
 |----------|------|
 | name | str |
 
 ### Version
+
 | Property | Type |
 |----------|------|
 | author | str |
@@ -78,6 +87,7 @@
 | changes | str |
 
 ### Metadata
+
 | Property | Type |
 |----------|------|
 | description | str |
@@ -86,6 +96,7 @@
 | version | str |
 
 ### UseCase
+
 | Property | Type |
 |----------|------|
 | has_ato | bool |
@@ -101,84 +112,111 @@
 | infrastructure | str |
 
 ### Agency
+
 | Property | Type |
 |----------|------|
 | name | str |
 | abbreviation | str |
 
 ### Bureau
+
 | Property | Type |
 |----------|------|
 | name | str |
 
 ### Output
+
 | Property | Type |
 |----------|------|
 | description | str |
 
 ### PurposeBenefit
+
 | Property | Type |
 |----------|------|
 | description | str |
 
 ### EvaluationRun
+
 | Property | Type |
 |----------|------|
 
 ### System
+
 | Property | Type |
 |----------|------|
 | name | str |
 
-
 ## Relationship Types
 
 ### HAS_PURPOSE
+
 Patterns:
+
 - (UseCase) -> (PurposeBenefit) [2,213 instances]
 
 ### PRODUCES
+
 Patterns:
+
 - (UseCase) -> (Output) [2,074 instances]
 
 ### HAS_USE_CASE
+
 Patterns:
+
 - (Agency) -> (UseCase) [2,052 instances]
 
 ### USES_SYSTEM
+
 Patterns:
+
 - (UseCase) -> (System) [768 instances]
 
 ### HAS_BUREAU
+
 Patterns:
+
 - (Agency) -> (Bureau) [336 instances]
 
 ### TAGGED_WITH
+
 Patterns:
+
 - (AICategory) -> (Keyword) [242 instances]
 
 ### HAS_CAPABILITY
+
 Patterns:
+
 - (AICategory) -> (Capability) [192 instances]
 
 ### INTEGRATES_VIA
+
 Patterns:
+
 - (AICategory) -> (IntegrationPattern) [84 instances]
 
 ### DEPENDS_ON
+
 Patterns:
+
 - (AICategory) -> (AICategory) [24 instances]
 
 ### BELONGS_TO
+
 Patterns:
+
 - (AICategory) -> (Zone) [14 instances]
 
 ### CURRENT_VERSION
+
 Patterns:
+
 - (Metadata) -> (Version) [1 instances]
 
-
 ## Constraints
+
 | Name | Type | For | Properties |
 |------|------|-----|------------|
 | agency_name | UNIQUENESS |  | name |
@@ -193,8 +231,8 @@ Patterns:
 | use_case_composite | UNIQUENESS |  | name, agency |
 | zone_name | UNIQUENESS |  | name |
 
-
 ## Indexes
+
 | Name | Type | For | Properties |
 |------|------|-----|------------|
 | agency_name | RANGE |  | name |
@@ -219,8 +257,8 @@ Patterns:
 | use_case_topic | RANGE |  | topic_area |
 | zone_name | RANGE |  | name |
 
-
 ## Common Patterns
+
 | Source | Relationship | Target | Frequency |
 |--------|--------------|--------|------------|
 | UseCase | HAS_PURPOSE | PurposeBenefit | 2,213 |
