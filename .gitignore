@@ -11,3 +11,4 @@ ENV/
 *.log
 output/
 .ipynb_checkpoints
+data/
