@@ -1,9 +1,43 @@
+#!/usr/bin/env python3
 """
-Technology Category Evaluation Test Script
+Federal Use Case AI Classifier System Validation
 
-This is a step-by-step test script to validate each component of the technology
-category evaluation system. Each section is clearly marked and can be tested
-independently.
+This script provides comprehensive validation of all components used in the federal use case
+AI technology classification system. It verifies:
+
+1. Environment Setup
+   - Configuration loading
+   - Required environment variables
+   - Directory structure
+
+2. External Dependencies
+   - Neo4j database connection and schema validation
+   - OpenAI API access and response validation
+   - Sentence transformer model loading and embedding tests
+
+3. Core Functionality
+   - Keyword matching accuracy and pattern validation
+   - Semantic analysis performance benchmarking
+   - LLM response quality assessment
+   - Score calculation verification
+   - Federal use case data structure validation
+
+4. Data Quality
+   - Federal use case completeness check
+   - Agency and bureau relationship validation
+   - Technology category hierarchy validation
+   - Relationship type constraints
+
+Output:
+- Generates detailed validation reports in data/output/test_results/
+- Logs all validation execution details in data/output/logs/
+- Produces data quality metrics for federal use cases
+
+Usage:
+    python fed_use_case_ai_classifier_validation.py
+
+Environment Variables:
+    Same as fed_use_case_ai_classifier.py
 """
 
 import os

@@ -1,794 +1,299 @@
 {
-  "nodes": {
-    "AICategory": {
+  "node_labels": [
+    {
+      "label": "AICategory",
       "properties": {
-        "id": "str",
-        "status": "str",
-        "maturity_level": "str",
-        "name": "str",
-        "created_at": "DateTime",
-        "last_updated": "DateTime",
-        "category_definition": "str",
-        "zone": "str"
+        "id": "string",
+        "status": "string",
+        "maturity_level": "string",
+        "name": "string",
+        "created_at": "unknown",
+        "last_updated": "unknown",
+        "category_definition": "string",
+        "zone": "string"
       },
-      "count": 14
+      "relationships_out": [
+        "BELONGS_TO",
+        "TAGGED_WITH",
+        "HAS_CAPABILITY",
+        "DEPENDS_ON",
+        "INTEGRATES_VIA"
+      ],
+      "relationships_in": []
     },
-    "Keyword": {
+    {
+      "label": "Keyword",
       "properties": {
-        "name": "str"
+        "name": "string"
       },
-      "count": 237
+      "relationships_out": [],
+      "relationships_in": [
+        "TAGGED_WITH"
+      ]
     },
-    "Capability": {
+    {
+      "label": "Capability",
       "properties": {
-        "name": "str"
+        "name": "string"
       },
-      "count": 178
+      "relationships_out": [],
+      "relationships_in": [
+        "HAS_CAPABILITY"
+      ]
     },
-    "Zone": {
+    {
+      "label": "Zone",
       "properties": {
-        "name": "str"
+        "name": "string"
       },
-      "count": 4
+      "relationships_out": [],
+      "relationships_in": [
+        "BELONGS_TO"
+      ]
     },
-    "IntegrationPattern": {
+    {
+      "label": "IntegrationPattern",
       "properties": {
-        "name": "str"
+        "name": "string"
       },
-      "count": 70
+      "relationships_out": [],
+      "relationships_in": [
+        "INTEGRATES_VIA"
+      ]
     },
-    "Version": {
+    {
+      "label": "Version",
       "properties": {
-        "author": "str",
-        "created_at": "DateTime",
-        "number": "str",
-        "changes": "str"
+        "author": "string",
+        "created_at": "unknown",
+        "number": "string",
+        "changes": "string"
       },
-      "count": 1
+      "relationships_out": [],
+      "relationships_in": [
+        "CURRENT_VERSION"
+      ]
     },
-    "Metadata": {
+    {
+      "label": "Metadata",
       "properties": {
-        "description": "str",
-        "last_updated": "DateTime",
-        "schema_version": "str",
-        "version": "str"
+        "description": "string",
+        "last_updated": "unknown",
+        "schema_version": "string",
+        "version": "string"
       },
-      "count": 1
+      "relationships_out": [
+        "CURRENT_VERSION"
+      ],
+      "relationships_in": []
     },
-    "UseCase": {
+    {
+      "label": "UseCase",
       "properties": {
-        "has_ato": "bool",
-        "topic_area": "str",
-        "updated_at": "DateTime",
-        "contains_pii": "bool",
-        "date_initiated": "str",
-        "name": "str",
-        "agency": "str",
-        "purpose_benefits": "str",
-        "outputs": "str",
-        "dev_stage": "str",
-        "infrastructure": "str"
+        "has_ato": "boolean",
+        "topic_area": "string",
+        "updated_at": "unknown",
+        "contains_pii": "boolean",
+        "date_initiated": "string",
+        "name": "string",
+        "agency": "string",
+        "purpose_benefits": "string",
+        "outputs": "string",
+        "dev_stage": "string",
+        "infrastructure": "string"
       },
-      "count": 2052
+      "relationships_out": [
+        "HAS_PURPOSE",
+        "PRODUCES"
+      ],
+      "relationships_in": [
+        "HAS_USE_CASE"
+      ]
     },
-    "Agency": {
+    {
+      "label": "Agency",
       "properties": {
-        "name": "str",
-        "abbreviation": "str"
+        "name": "string",
+        "abbreviation": "string"
       },
-      "count": 42
+      "relationships_out": [
+        "HAS_USE_CASE",
+        "HAS_BUREAU"
+      ],
+      "relationships_in": []
     },
-    "Bureau": {
+    {
+      "label": "Bureau",
       "properties": {
-        "name": "str"
+        "name": "string"
       },
-      "count": 325
+      "relationships_out": [],
+      "relationships_in": [
+        "HAS_BUREAU"
+      ]
     },
-    "Output": {
+    {
+      "label": "Output",
       "properties": {
-        "description": "str"
+        "description": "string"
       },
-      "count": 1709
+      "relationships_out": [],
+      "relationships_in": [
+        "PRODUCES"
+      ]
     },
-    "PurposeBenefit": {
+    {
+      "label": "PurposeBenefit",
       "properties": {
-        "description": "str"
+        "description": "string"
       },
-      "count": 2094
+      "relationships_out": [],
+      "relationships_in": [
+        "HAS_PURPOSE"
+      ]
     },
-    "EvaluationRun": {
+    {
+      "label": "System",
+      "properties": {
+        "name": "string"
+      },
+      "relationships_out": [],
+      "relationships_in": [
+        "USES_SYSTEM"
+      ]
+    },
+    {
+      "label": "SchemaMetadata",
+      "properties": {
+        "id": "string",
+        "supported_investment_stages": "list",
+        "supported_agency_types": "list",
+        "supported_use_case_statuses": "list",
+        "supported_match_methods": "list",
+        "last_updated": "unknown",
+        "supported_relationship_types": "list",
+        "version": "string"
+      },
+      "relationships_out": [],
+      "relationships_in": []
+    }
+  ],
+  "relationship_types": [
+    {
+      "type": "BELONGS_TO",
       "properties": {},
-      "count": 0
+      "source_labels": [
+        "AICategory"
+      ],
+      "target_labels": [
+        "Zone"
+      ]
     },
-    "System": {
+    {
+      "type": "TAGGED_WITH",
       "properties": {
-        "name": "str"
+        "weight": "integer"
       },
-      "count": 322
-    }
-  },
-  "relationships": {
-    "BELONGS_TO": {
-      "count": 14
-    },
-    "TAGGED_WITH": {
-      "count": 242
-    },
-    "HAS_CAPABILITY": {
-      "count": 192
-    },
-    "DEPENDS_ON": {
-      "count": 24
-    },
-    "INTEGRATES_VIA": {
-      "count": 84
-    },
-    "CURRENT_VERSION": {
-      "count": 1
-    },
-    "IMPLEMENTS": {
-      "count": 0
-    },
-    "HAS_BUREAU": {
-      "count": 336
-    },
-    "HAS_USE_CASE": {
-      "count": 2052
-    },
-    "USES_SYSTEM": {
-      "count": 768
-    },
-    "HAS_PURPOSE": {
-      "count": 2213
-    },
-    "PRODUCES": {
-      "count": 2074
-    }
-  },
-  "constraints": [
-    {
-      "id": 16,
-      "name": "agency_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Agency"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "agency_name",
-      "propertyType": null
-    },
-    {
-      "id": 4,
-      "name": "ai_category_id",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "AICategory"
-      ],
-      "properties": [
-        "id"
-      ],
-      "ownedIndex": "ai_category_id",
-      "propertyType": null
-    },
-    {
-      "id": 18,
-      "name": "bureau_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Bureau"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "bureau_name",
-      "propertyType": null
-    },
-    {
-      "id": 8,
-      "name": "capability_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Capability"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "capability_name",
-      "propertyType": null
-    },
-    {
-      "id": 29,
-      "name": "evaluation_run_id",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "EvaluationRun"
-      ],
-      "properties": [
-        "run_id"
-      ],
-      "ownedIndex": "evaluation_run_id",
-      "propertyType": null
-    },
-    {
-      "id": 6,
-      "name": "keyword_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Keyword"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "keyword_name",
-      "propertyType": null
-    },
-    {
-      "id": 25,
-      "name": "output_composite",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Output"
-      ],
-      "properties": [
-        "description",
-        "agency"
-      ],
-      "ownedIndex": "output_composite",
-      "propertyType": null
-    },
-    {
-      "id": 27,
-      "name": "purpose_benefit_composite",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "PurposeBenefit"
-      ],
-      "properties": [
-        "description",
-        "agency"
-      ],
-      "ownedIndex": "purpose_benefit_composite",
-      "propertyType": null
-    },
-    {
-      "id": 32,
-      "name": "system_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "System"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "system_name",
-      "propertyType": null
-    },
-    {
-      "id": 14,
-      "name": "use_case_composite",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "UseCase"
-      ],
-      "properties": [
-        "name",
-        "agency"
-      ],
-      "ownedIndex": "use_case_composite",
-      "propertyType": null
-    },
-    {
-      "id": 10,
-      "name": "zone_name",
-      "type": "UNIQUENESS",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Zone"
-      ],
-      "properties": [
-        "name"
-      ],
-      "ownedIndex": "zone_name",
-      "propertyType": null
-    }
-  ],
-  "indexes": [
-    {
-      "id": 15,
-      "name": "agency_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Agency"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "agency_name",
-      "lastRead": "2025-02-05T14:05:54.197000000+00:00",
-      "readCount": 2595
-    },
-    {
-      "id": 3,
-      "name": "ai_category_id",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "AICategory"
-      ],
-      "properties": [
-        "id"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "ai_category_id",
-      "lastRead": "2025-02-03T00:04:20.761000000+00:00",
-      "readCount": 42
-    },
-    {
-      "id": 11,
-      "name": "ai_category_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "AICategory"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": "2025-02-03T14:38:20.627000000+00:00",
-      "readCount": 522
-    },
-    {
-      "id": 12,
-      "name": "ai_category_zone",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "AICategory"
-      ],
-      "properties": [
-        "zone"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 17,
-      "name": "bureau_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Bureau"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "bureau_name",
-      "lastRead": "2025-02-05T14:05:52.279000000+00:00",
-      "readCount": 986
-    },
-    {
-      "id": 7,
-      "name": "capability_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Capability"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "capability_name",
-      "lastRead": "2025-02-03T00:04:25.614000000+00:00",
-      "readCount": 548
-    },
-    {
-      "id": 28,
-      "name": "evaluation_run_id",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "EvaluationRun"
-      ],
-      "properties": [
-        "run_id"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "evaluation_run_id",
-      "lastRead": "2025-02-03T14:39:20.542000000+00:00",
-      "readCount": 3
-    },
-    {
-      "id": 30,
-      "name": "evaluation_timestamp",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "EvaluationRun"
-      ],
-      "properties": [
-        "timestamp"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 1,
-      "name": "index_343aff4e",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "LOOKUP",
-      "entityType": "NODE",
-      "labelsOrTypes": null,
-      "properties": null,
-      "indexProvider": "token-lookup-1.0",
-      "owningConstraint": null,
-      "lastRead": "2025-02-05T16:04:26.680000000+00:00",
-      "readCount": 4595
-    },
-    {
-      "id": 2,
-      "name": "index_f7700477",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "LOOKUP",
-      "entityType": "RELATIONSHIP",
-      "labelsOrTypes": null,
-      "properties": null,
-      "indexProvider": "token-lookup-1.0",
-      "owningConstraint": null,
-      "lastRead": "2025-02-05T14:05:56.267000000+00:00",
-      "readCount": 106
-    },
-    {
-      "id": 5,
-      "name": "keyword_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Keyword"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "keyword_name",
-      "lastRead": "2025-02-03T01:37:08.642000000+00:00",
-      "readCount": 718
-    },
-    {
-      "id": 24,
-      "name": "output_composite",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Output"
-      ],
-      "properties": [
-        "description",
-        "agency"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "output_composite",
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 26,
-      "name": "purpose_benefit_composite",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "PurposeBenefit"
-      ],
-      "properties": [
-        "description",
-        "agency"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "purpose_benefit_composite",
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 31,
-      "name": "system_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "System"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "system_name",
-      "lastRead": "2025-02-05T14:05:54.402000000+00:00",
-      "readCount": 1423
-    },
-    {
-      "id": 20,
-      "name": "use_case_agency",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "UseCase"
-      ],
-      "properties": [
-        "agency"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 13,
-      "name": "use_case_composite",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "UseCase"
-      ],
-      "properties": [
-        "name",
-        "agency"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "use_case_composite",
-      "lastRead": "2025-02-05T14:05:56.022000000+00:00",
-      "readCount": 11365
-    },
-    {
-      "id": 23,
-      "name": "use_case_confidence",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "RELATIONSHIP",
-      "labelsOrTypes": [
-        "IMPLEMENTS"
-      ],
-      "properties": [
-        "confidence"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 22,
-      "name": "use_case_match_method",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "RELATIONSHIP",
-      "labelsOrTypes": [
-        "IMPLEMENTS"
-      ],
-      "properties": [
-        "match_method"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 21,
-      "name": "use_case_match_score",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "RELATIONSHIP",
-      "labelsOrTypes": [
-        "IMPLEMENTS"
-      ],
-      "properties": [
-        "final_score"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 19,
-      "name": "use_case_topic",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "UseCase"
-      ],
-      "properties": [
-        "topic_area"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": null,
-      "lastRead": null,
-      "readCount": 0
-    },
-    {
-      "id": 9,
-      "name": "zone_name",
-      "state": "ONLINE",
-      "populationPercent": 100.0,
-      "type": "RANGE",
-      "entityType": "NODE",
-      "labelsOrTypes": [
-        "Zone"
-      ],
-      "properties": [
-        "name"
-      ],
-      "indexProvider": "range-1.0",
-      "owningConstraint": "zone_name",
-      "lastRead": "2025-02-03T00:04:20.760000000+00:00",
-      "readCount": 26
-    }
-  ],
-  "patterns": [
-    {
-      "source_labels": [
-        "UseCase"
-      ],
-      "relationship": "HAS_PURPOSE",
-      "target_labels": [
-        "PurposeBenefit"
-      ],
-      "frequency": 2213
-    },
-    {
-      "source_labels": [
-        "UseCase"
-      ],
-      "relationship": "PRODUCES",
-      "target_labels": [
-        "Output"
-      ],
-      "frequency": 2074
-    },
-    {
-      "source_labels": [
-        "Agency"
-      ],
-      "relationship": "HAS_USE_CASE",
-      "target_labels": [
-        "UseCase"
-      ],
-      "frequency": 2052
-    },
-    {
-      "source_labels": [
-        "UseCase"
-      ],
-      "relationship": "USES_SYSTEM",
-      "target_labels": [
-        "System"
-      ],
-      "frequency": 768
-    },
-    {
-      "source_labels": [
-        "Agency"
-      ],
-      "relationship": "HAS_BUREAU",
-      "target_labels": [
-        "Bureau"
-      ],
-      "frequency": 336
-    },
-    {
       "source_labels": [
         "AICategory"
       ],
-      "relationship": "TAGGED_WITH",
       "target_labels": [
         "Keyword"
-      ],
-      "frequency": 242
+      ]
     },
     {
+      "type": "HAS_CAPABILITY",
+      "properties": {},
       "source_labels": [
         "AICategory"
       ],
-      "relationship": "HAS_CAPABILITY",
       "target_labels": [
         "Capability"
-      ],
-      "frequency": 192
+      ]
     },
     {
+      "type": "DEPENDS_ON",
+      "properties": {
+        "created_at": "unknown",
+        "cross_zone": "boolean"
+      },
       "source_labels": [
         "AICategory"
       ],
-      "relationship": "INTEGRATES_VIA",
+      "target_labels": [
+        "AICategory"
+      ]
+    },
+    {
+      "type": "INTEGRATES_VIA",
+      "properties": {},
+      "source_labels": [
+        "AICategory"
+      ],
       "target_labels": [
         "IntegrationPattern"
-      ],
-      "frequency": 84
+      ]
     },
     {
-      "source_labels": [
-        "AICategory"
-      ],
-      "relationship": "DEPENDS_ON",
-      "target_labels": [
-        "AICategory"
-      ],
-      "frequency": 24
-    },
-    {
-      "source_labels": [
-        "AICategory"
-      ],
-      "relationship": "BELONGS_TO",
-      "target_labels": [
-        "Zone"
-      ],
-      "frequency": 14
-    },
-    {
+      "type": "CURRENT_VERSION",
+      "properties": {},
       "source_labels": [
         "Metadata"
       ],
-      "relationship": "CURRENT_VERSION",
       "target_labels": [
         "Version"
+      ]
+    },
+    {
+      "type": "HAS_BUREAU",
+      "properties": {},
+      "source_labels": [
+        "Agency"
       ],
-      "frequency": 1
+      "target_labels": [
+        "Bureau"
+      ]
+    },
+    {
+      "type": "HAS_USE_CASE",
+      "properties": {},
+      "source_labels": [
+        "Agency"
+      ],
+      "target_labels": [
+        "UseCase"
+      ]
+    },
+    {
+      "type": "USES_SYSTEM",
+      "properties": {},
+      "source_labels": [
+        "UseCase"
+      ],
+      "target_labels": [
+        "System"
+      ]
+    },
+    {
+      "type": "HAS_PURPOSE",
+      "properties": {},
+      "source_labels": [
+        "UseCase"
+      ],
+      "target_labels": [
+        "PurposeBenefit"
+      ]
+    },
+    {
+      "type": "PRODUCES",
+      "properties": {},
+      "source_labels": [
+        "UseCase"
+      ],
+      "target_labels": [
+        "Output"
+      ]
     }
-  ]
+  ],
+  "timestamp": "2025-02-06T21:38:02.323560"
 }

@@ -1,5 +1,6 @@
 import csv
 import logging
+from datetime import datetime
 
 def save_results_to_csv(results, timestamp):
     """Save evaluation results to CSV files."""
@@ -7,7 +8,10 @@ def save_results_to_csv(results, timestamp):
     neo4j_preview = []
     
     for result in results:
-        # Format confidence as percentage with one decimal
+        # Keep original confidence value for detailed results
+        detailed_results.append(result)
+        
+        # Format confidence as percentage only for preview
         confidence_pct = f"{result['confidence'] * 100:.1f}%"
         
         # Generate method-specific match details
@@ -27,9 +31,6 @@ def save_results_to_csv(results, timestamp):
                 
         match_details_str = " | ".join(match_details)
         
-        # Detailed results (keep all fields)
-        detailed_results.append(result)
-        
         # Neo4j preview (simplified format)
         if result['relationship_type'] != 'NO_MATCH':
             neo4j_preview.append({
@@ -43,14 +44,14 @@ def save_results_to_csv(results, timestamp):
             })
     
     # Save detailed results
-    detailed_file = f"data/output/results/tech_eval_detailed_{timestamp}.csv"
+    detailed_file = f"data/output/results/ai_tech_classification_neo4j_{timestamp}.csv"
     with open(detailed_file, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=detailed_results[0].keys())
         writer.writeheader()
         writer.writerows(detailed_results)
     
     # Save Neo4j preview
-    preview_file = f"data/output/results/tech_eval_neo4j_preview_{timestamp}.csv"
+    preview_file = f"data/output/results/ai_tech_classification_preview_{timestamp}.csv"
     with open(preview_file, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=neo4j_preview[0].keys())
         writer.writeheader()

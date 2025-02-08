@@ -1,11 +1,40 @@
 #!/usr/bin/env python3
 """
-Technology Category Evaluation Script
+Federal Use Case AI Technology Classifier
 
-This script evaluates and validates the effectiveness of different methods for mapping
-use cases to AI technology categories using Neo4j, OpenAI, and semantic analysis.
+This script evaluates federal AI use cases from government agencies and classifies them 
+against 14 AI technology categories using a multi-method approach combining keyword matching, 
+semantic analysis, and LLM verification.
 
-Results are consolidated into a single output file with validation metrics.
+Features:
+- Keyword-based matching using curated technology keywords
+- Semantic similarity analysis using sentence transformers
+- LLM-based verification using OpenAI's GPT models
+- Confidence scoring with weighted multi-signal approach
+- Relationship type classification (PRIMARY, SECONDARY, RELATED)
+- Detailed evaluation metrics and justifications
+
+Output Files:
+1. fed_use_case_ai_classification_[timestamp].csv
+   - Detailed evaluation results with scores and justifications
+   - Used for Neo4j import and analysis
+
+2. fed_use_case_ai_classification_preview_[timestamp].csv
+   - Simplified view of classification results
+   - Used for quick review and validation
+
+Usage:
+    python fed_use_case_ai_classifier.py [-n NUM_CASES | -a]
+    
+Arguments:
+    -n, --number NUM_CASES    Number of use cases to process
+    -a, --all                Process all use cases
+
+Environment Variables:
+    NEO4J_URI               Neo4j database URI
+    NEO4J_USER             Neo4j username
+    NEO4J_PASSWORD         Neo4j password
+    OPENAI_API_KEY         OpenAI API key
 """
 
 import argparse
@@ -30,6 +59,7 @@ from tqdm import tqdm
 import time
 import re
 import psutil
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Load environment variables
 load_dotenv()
@@ -117,7 +147,7 @@ class MatchResult:
     error: Optional[str] = None
 
     def calculate_final_score(self) -> float:
-        """Calculate final score based on method weights and potential boosts"""
+        """Calculate final score with enhanced method agreement boosting"""
         weights = Config.METHOD_WEIGHTS
         
         # Calculate base weighted scores
@@ -125,36 +155,94 @@ class MatchResult:
         semantic_weighted = self.semantic_score * weights['semantic']['score_weight']
         llm_weighted = self.llm_score * weights['llm']['score_weight']
         
-        # Calculate boost based on multiple strong signals
+        # Enhanced boost calculation based on method agreement
         boost = 0.0
         
-        # Boost for keyword + semantic agreement
+        # Strong boost for three-method agreement
         if (self.keyword_score >= Config.Thresholds.KEYWORD and 
-            self.semantic_score >= Config.Thresholds.SEMANTIC):
-            boost += weights['keyword']['boost_factor']
+            self.semantic_score >= Config.Thresholds.SEMANTIC and
+            self.llm_score >= Config.Thresholds.LLM):
+            boost += 0.30  # Increased boost for all methods agreeing
+            
+        # Medium boost for semantic + LLM agreement (most reliable combination)
+        elif (self.semantic_score >= Config.Thresholds.SEMANTIC and 
+              self.llm_score >= Config.Thresholds.LLM):
+            boost += 0.20  # Increased for stronger two-method agreement
+            
+        # New: Medium-high boost for strong two-method agreement
+        elif ((self.keyword_score >= 0.6 and self.semantic_score >= 0.6) or
+              (self.keyword_score >= 0.6 and self.llm_score >= 0.6) or
+              (self.semantic_score >= 0.6 and self.llm_score >= 0.6)):
+            boost += 0.15  # New boost level for strong two-method agreement
+            
+        # Smaller boost for keyword + semantic agreement
+        elif (self.keyword_score >= Config.Thresholds.KEYWORD and 
+              self.semantic_score >= Config.Thresholds.SEMANTIC):
+            boost += 0.10
+            
+        # Small boost for keyword + LLM agreement
+        elif (self.keyword_score >= Config.Thresholds.KEYWORD and 
+              self.llm_score >= Config.Thresholds.LLM):
+            boost += 0.08
         
-        # Additional boost if LLM confirms
-        if (self.llm_score >= Config.Thresholds.LLM and 
-            (self.keyword_score >= Config.Thresholds.KEYWORD or 
-             self.semantic_score >= Config.Thresholds.SEMANTIC)):
-            boost += weights['llm']['boost_factor']
+        # Additional confidence boost for strong individual signals
+        if self.keyword_score >= 0.8:  # Very strong keyword match
+            boost += 0.05
+        if self.semantic_score >= 0.7:  # Strong semantic match
+            boost += 0.05
+        if self.llm_score >= 0.8:  # Strong LLM confidence
+            boost += 0.05
         
-        # Take the maximum score and apply boost
+        # Take the maximum base score and apply cumulative boost
         base_score = max(keyword_weighted, semantic_weighted, llm_weighted)
         final_score = min(1.0, base_score + boost)
         
-        return round(final_score, 3)  # Round to 3 decimal places
+        return round(final_score, 3)
 
     def determine_relationship_type(self, score: float) -> RelationType:
-        """Determine relationship type based on final score"""
-        score = round(score, 3)  # Ensure consistent decimal places
-        if score >= Config.Thresholds.PRIMARY:
-            return RelationType.PRIMARY
-        elif score >= Config.Thresholds.SECONDARY:
-            return RelationType.SECONDARY
-        elif score >= Config.Thresholds.RELATED:
-            return RelationType.RELATED
+        """Enhanced relationship type determination with cross-validation"""
+        score = round(score, 3)
+        
+        # Cross-validate results for more accurate relationship type assignment
+        method_agreement = sum(1 for s in [self.keyword_score, self.semantic_score, self.llm_score] 
+                             if s >= Config.Thresholds.RELATED)
+        
+        # Adjust thresholds based on method agreement
+        if method_agreement >= 2:  # At least two methods agree
+            if score >= Config.Thresholds.PRIMARY * 0.95:  # Slightly lower threshold
+                return RelationType.PRIMARY
+            elif score >= Config.Thresholds.SECONDARY * 0.95:
+                return RelationType.SECONDARY
+            elif score >= Config.Thresholds.RELATED * 0.95:
+                return RelationType.RELATED
+        else:  # Single method or no agreement - use stricter thresholds
+            if score >= Config.Thresholds.PRIMARY * 1.05:  # Slightly higher threshold
+                return RelationType.PRIMARY
+            elif score >= Config.Thresholds.SECONDARY * 1.05:
+                return RelationType.SECONDARY
+            elif score >= Config.Thresholds.RELATED * 1.05:
+                return RelationType.RELATED
+        
         return RelationType.NO_MATCH
+
+@dataclass
+class NoMatchAnalysis:
+    """Data structure for capturing detailed information about unmatched use cases"""
+    timestamp: str
+    use_case_id: str
+    use_case_name: str
+    agency: str
+    abbreviation: str
+    bureau: Optional[str]
+    topic_area: str
+    dev_stage: str
+    purposes: List[str]
+    outputs: List[str]
+    best_scores: Dict[str, float]  # Scores from each method
+    reason_category: str  # One of: NOVEL_TECH, IMPLEMENTATION_SPECIFIC, NON_AI, UNCLEAR_DESC, OTHER
+    llm_analysis: str    # Full LLM analysis text
+    improvement_suggestions: str  # Extracted from LLM analysis
+    potential_categories: List[str]  # Potential new categories to consider
 
 class Neo4jInterface:
     """Interface for Neo4j database operations"""
@@ -162,7 +250,48 @@ class Neo4jInterface:
     def __init__(self, uri: str, user: str, password: str):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.logger = logging.getLogger('tech_mapper.neo4j')
-        
+        self._setup_schema()
+    
+    def _setup_schema(self):
+        """Set up required indexes for IMPLEMENTS relationships and LLM analyses"""
+        try:
+            with self.driver.session() as session:
+                # Create indexes for relationship properties
+                relationship_indexes = [
+                    ("implements_confidence_idx", "confidence"),
+                    ("implements_match_method_idx", "match_method"),
+                    ("implements_final_score_idx", "final_score"),
+                    ("implements_relationship_type_idx", "relationship_type")
+                ]
+                
+                for idx_name, prop in relationship_indexes:
+                    session.run(f"""
+                    CREATE INDEX {idx_name} IF NOT EXISTS
+                    FOR ()-[r:IMPLEMENTS]-()
+                    ON (r.{prop})
+                    """)
+                    self.logger.info(f"Created/verified index {idx_name} on IMPLEMENTS.{prop}")
+                
+                # Create indexes for LLMAnalysis nodes
+                llm_indexes = [
+                    ("llm_analysis_id_idx", "id"),
+                    ("llm_analysis_type_idx", "analysis_type"),
+                    ("llm_analysis_timestamp_idx", "timestamp"),
+                    ("llm_analysis_reason_idx", "reason_category"),
+                    ("llm_analysis_model_idx", "model")
+                ]
+                
+                for idx_name, prop in llm_indexes:
+                    session.run(f"""
+                    CREATE INDEX {idx_name} IF NOT EXISTS
+                    FOR (a:LLMAnalysis)
+                    ON (a.{prop})
+                    """)
+                    self.logger.info(f"Created/verified index {idx_name} on LLMAnalysis.{prop}")
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to set up schema: {str(e)}")
+    
     def close(self):
         if self.driver:
             self.driver.close()
@@ -172,7 +301,7 @@ class Neo4jInterface:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-    
+
     def fetch_categories(self) -> Dict[str, Category]:
         """Fetch all AI technology categories with their related data"""
         query = """
@@ -309,16 +438,121 @@ class Neo4jInterface:
             self.logger.error(f"[-] Failed to fetch use cases: {str(e)}")
             raise
 
+    def _validate_match_result(self, match: MatchResult) -> Tuple[bool, List[str]]:
+        """Validate match result before saving to Neo4j"""
+        errors = []
+        
+        # 1. Node existence validation
+        try:
+            with self.driver.session() as session:
+                # Check UseCase node exists
+                use_case_exists = session.run(
+                    "MATCH (u:UseCase {id: $id}) RETURN count(u) > 0 as exists",
+                    id=match.use_case_id
+                ).single()["exists"]
+                
+                if not use_case_exists:
+                    errors.append(f"UseCase node with id {match.use_case_id} not found")
+                
+                # Check AICategory node exists
+                category_exists = session.run(
+                    "MATCH (c:AICategory {id: $id}) RETURN count(c) > 0 as exists",
+                    id=match.category_id
+                ).single()["exists"]
+                
+                if not category_exists:
+                    errors.append(f"AICategory node with id {match.category_id} not found")
+        except Exception as e:
+            errors.append(f"Node existence validation failed: {str(e)}")
+            
+        # 2. Property type validation
+        try:
+            # Validate numeric properties
+            for prop, value in [
+                ("confidence", match.confidence),
+                ("final_score", match.final_score)
+            ]:
+                if not isinstance(value, (int, float)):
+                    errors.append(f"{prop} must be numeric, got {type(value)}")
+                elif not 0 <= value <= 1:
+                    errors.append(f"{prop} must be between 0 and 1, got {value}")
+            
+            # Validate string properties
+            if not isinstance(match.method.value, str):
+                errors.append(f"match_method must be string, got {type(match.method.value)}")
+            
+            if not isinstance(match.relationship_type.value, str):
+                errors.append(f"relationship_type must be string, got {type(match.relationship_type.value)}")
+            
+            if not isinstance(match.explanation, str):
+                errors.append(f"explanation must be string, got {type(match.explanation)}")
+                
+        except Exception as e:
+            errors.append(f"Property type validation failed: {str(e)}")
+            
+        # 3. Enum value validation
+        valid_methods = {method.value for method in MatchMethod}
+        if match.method.value not in valid_methods:
+            errors.append(f"Invalid match_method: {match.method.value}")
+            
+        valid_types = {rel_type.value for rel_type in RelationType}
+        if match.relationship_type.value not in valid_types:
+            errors.append(f"Invalid relationship_type: {match.relationship_type.value}")
+            
+        # 4. Score consistency validation
+        if match.relationship_type != RelationType.NO_MATCH:
+            if match.confidence <= 0:
+                errors.append(f"Non-NO_MATCH relationship requires confidence > 0, got {match.confidence}")
+            if match.final_score <= 0:
+                errors.append(f"Non-NO_MATCH relationship requires final_score > 0, got {match.final_score}")
+                
+        # 5. Method-specific validation
+        if match.method == MatchMethod.KEYWORD and not match.matched_keywords:
+            errors.append("Keyword match method requires matched_keywords")
+            
+        if match.method == MatchMethod.LLM and not match.llm_justification:
+            errors.append("LLM match method requires llm_justification")
+            
+        return len(errors) == 0, errors
+
     def save_match_result(self, match: MatchResult) -> bool:
-        """Save a match result to Neo4j"""
+        """Save a match result to Neo4j with validation and proper typing"""
+        # First validate the match result
+        is_valid, validation_errors = self._validate_match_result(match)
+        if not is_valid:
+            self.logger.error("Match result validation failed:")
+            for error in validation_errors:
+                self.logger.error(f"  - {error}")
+            return False
+            
         query = """
+        // Ensure we're connecting the right node types
         MATCH (u:UseCase {id: $use_case_id})
         MATCH (c:AICategory {id: $category_id})
-        MERGE (u)-[r:MATCHES {
-            method: $method,
+        
+        // Create or update the relationship with all required properties
+        MERGE (u)-[r:IMPLEMENTS]->(c)
+        SET r = {
+            match_method: $method,
             confidence: $confidence,
-            explanation: $explanation
-        }]->(c)
+            final_score: $final_score,
+            relationship_type: $relationship_type,
+            explanation: $explanation,
+            last_updated: datetime()
+        }
+        
+        // Create LLM Analysis node if LLM was used
+        WITH u, c, r
+        WHERE $llm_used = true
+        MERGE (a:LLMAnalysis {
+            id: $analysis_id,
+            timestamp: datetime(),
+            analysis_type: 'match',
+            score: $llm_score,
+            justification: $llm_justification,
+            model: 'gpt-3.5-turbo'
+        })
+        MERGE (r)-[:HAS_ANALYSIS]->(a)
         """
         
         try:
@@ -328,12 +562,62 @@ class Neo4jInterface:
                     use_case_id=match.use_case_id,
                     category_id=match.category_id,
                     method=match.method.value,
-                    confidence=match.confidence,
-                    explanation=match.explanation
+                    confidence=float(match.confidence),
+                    final_score=float(match.final_score),
+                    relationship_type=match.relationship_type.value,
+                    explanation=str(match.explanation),
+                    llm_used=match.method == MatchMethod.LLM,
+                    analysis_id=f"llm_match_{match.use_case_id}_{match.category_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    llm_score=float(match.llm_score) if match.llm_score else 0.0,
+                    llm_justification=match.llm_justification if match.llm_justification else ""
                 )
                 return True
         except Exception as e:
             self.logger.error(f"[-] Failed to save match result: {str(e)}")
+            return False
+
+    def save_no_match_analysis(self, use_case_id: str, analysis: NoMatchAnalysis) -> bool:
+        """Save no-match LLM analysis to Neo4j"""
+        query = """
+        MATCH (u:UseCase {id: $use_case_id})
+        
+        // Create LLM Analysis node for no-match case
+        CREATE (a:LLMAnalysis {
+            id: $analysis_id,
+            timestamp: datetime(),
+            analysis_type: 'no_match',
+            reason_category: $reason_category,
+            analysis_text: $analysis_text,
+            improvement_suggestions: $improvement_suggestions,
+            model: 'gpt-3.5-turbo'
+        })
+        
+        // Create relationship between UseCase and Analysis
+        CREATE (u)-[:HAS_NO_MATCH_ANALYSIS]->(a)
+        
+        // Create relationships to potential categories if any
+        WITH a
+        UNWIND $potential_categories as category_name
+        OPTIONAL MATCH (c:AICategory {name: category_name})
+        WITH a, c
+        WHERE c IS NOT NULL
+        CREATE (a)-[:SUGGESTS_CATEGORY]->(c)
+        """
+        
+        try:
+            with self.driver.session() as session:
+                session.run(
+                    query,
+                    use_case_id=use_case_id,
+                    analysis_id=f"llm_no_match_{use_case_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    reason_category=analysis.reason_category,
+                    analysis_text=analysis.llm_analysis,
+                    improvement_suggestions=analysis.improvement_suggestions,
+                    potential_categories=analysis.potential_categories
+                )
+                return True
+        except Exception as e:
+            self.logger.error(f"[-] Failed to save no-match analysis: {str(e)}")
             return False
 
 class TextProcessor:
@@ -453,127 +737,152 @@ class TextProcessor:
             self.logger.error(f"[-] Failed to compute embedding: {str(e)}")
             return self.model.encode("")
     
-    def get_semantic_similarity(
-        self, 
-        text1: str, 
-        text2: str,
-        threshold: float = 0.5
-    ) -> float:
-        """Calculate semantic similarity between texts"""
+    def calculate_semantic_score(self, use_case_text: str, tech_category_text: str) -> float:
+        """Calculate semantic similarity score between use case and tech category"""
         try:
-            # Get embeddings
-            embedding1 = self.get_embedding(text1)
-            embedding2 = self.get_embedding(text2)
+            # Get embeddings for both texts
+            use_case_embedding = self.get_embedding(use_case_text)
+            tech_category_embedding = self.get_embedding(tech_category_text)
             
-            # Calculate similarity
-            similarity = float(
-                util.pytorch_cos_sim(embedding1, embedding2)[0][0]
-            )
+            # Calculate cosine similarity - this already gives us values between -1 and 1
+            similarity = cosine_similarity(
+                np.array(use_case_embedding).reshape(1, -1),
+                np.array(tech_category_embedding).reshape(1, -1)
+            )[0][0]
             
-            # Log strong matches
-            if similarity >= threshold:
-                self.logger.info(
-                    f"[+] Strong semantic match ({similarity:.2f})"
-                )
+            # Only normalize negative values to 0, keep positive values as is
+            normalized_score = max(0.0, similarity)
             
-            return similarity
-            
+            return float(normalized_score)
         except Exception as e:
-            self.logger.error(f"[-] Semantic similarity failed: {str(e)}")
+            self.logger.error(f"Error calculating semantic score: {str(e)}")
             return 0.0
     
     def evaluate_match(self, use_case: UseCase, category: Category) -> MatchResult:
-        """Evaluate if a use case matches a category using all available methods"""
+        """Evaluate if a use case matches a category using all available methods with enhanced validation"""
         try:
-            # Initialize result
+            # Initialize result with default values
             result = MatchResult(
                 use_case_id=use_case.id,
                 category_id=category.id,
-                method=MatchMethod.NO_MATCH,
-                keyword_score=0.0,
-                semantic_score=0.0,
-                llm_score=0.0,
-                final_score=0.0,
-                confidence=0.0,
-                relationship_type=RelationType.NO_MATCH,
-                matched_keywords=[],
-                semantic_details="",
-                llm_justification="",
-                explanation="",
-                error=None
+                method=MatchMethod.NO_MATCH
             )
             
-            # Step 1: Try keyword matching first
-            keyword_score, matched_terms = self.get_keyword_matches(
-                use_case.combined_text,
-                category.keywords + category.capabilities
-            )
-            result.keyword_score = keyword_score
-            result.matched_keywords = list(matched_terms)
-            
-            # If we have any keyword matches, prioritize them
-            if keyword_score >= Config.Thresholds.KEYWORD and matched_terms:
-                result.method = MatchMethod.KEYWORD
-                result.confidence = keyword_score
-                result.final_score = keyword_score * Config.METHOD_WEIGHTS['keyword']['score_weight']
-                # Add boost for multiple keyword matches
-                if len(matched_terms) > 1:
-                    result.final_score = min(1.0, result.final_score * 1.25)  # 25% boost for multiple matches
-                result.relationship_type = result.determine_relationship_type(result.final_score)
-                result.explanation = f"Keyword match ({keyword_score:.3f}) with terms: {', '.join(matched_terms)}"
+            # Validate inputs
+            if not use_case.combined_text or not category.combined_text:
+                result.error = "Missing required text content"
                 return result
             
-            # Step 2: Try semantic matching
-            semantic_score = self.get_semantic_similarity(
-                use_case.combined_text,
-                category.combined_text
-            )
-            result.semantic_score = semantic_score
-            result.semantic_details = f"Semantic similarity score: {semantic_score:.3f}"
+            # Enhanced chatbot detection
+            chatbot_indicators = [
+                'chatbot', 'virtual assistant', 'conversational ai', 'dialogue system',
+                'conversational agent', 'virtual agent', 'conversational interface',
+                'interactive assistant', 'chat interface', 'messaging interface'
+            ]
             
-            # If semantic score is good, use it
-            if semantic_score >= Config.Thresholds.SEMANTIC:
-                result.method = MatchMethod.SEMANTIC
-                result.confidence = semantic_score
-                result.final_score = semantic_score * Config.METHOD_WEIGHTS['semantic']['score_weight']
-                # Add boost if there are any keyword matches
-                if matched_terms:
-                    result.final_score = min(1.0, result.final_score * 1.2)  # 20% boost if keywords support
-                result.relationship_type = result.determine_relationship_type(result.final_score)
-                result.explanation = f"Semantic match ({semantic_score:.3f})"
-                if matched_terms:
-                    result.explanation += f" with supporting keywords: {', '.join(matched_terms)}"
-                return result
+            is_chatbot = any(indicator in use_case.combined_text.lower() for indicator in chatbot_indicators)
             
-            # Step 3: Only try LLM if we have some signal
+            def validate_score(score: float, name: str) -> float:
+                """Helper to validate and clean scores"""
+                try:
+                    score = float(score)
+                    if score < 0 or score > 1:
+                        self.logger.warning(f"Invalid {name} score {score}, clamping to [0,1]")
+                        score = max(0, min(1, score))
+                    return round(score, 3)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid {name} score {score}, defaulting to 0.0")
+                    return 0.0
+            
+            # Step 1: Try keyword matching with error recovery and chatbot boost
+            try:
+                keyword_score, matched_terms = self.get_keyword_matches(
+                    use_case.combined_text,
+                    category.keywords + category.capabilities
+                )
+                
+                # Apply chatbot-specific boost for NLP and Intelligent End-User Computing
+                if is_chatbot and category.name in ['Natural Language Processing (NLP)', 'Intelligent End-User Computing']:
+                    keyword_score = min(1.0, keyword_score * 1.25)  # 25% boost
+                    
+                result.keyword_score = validate_score(keyword_score, 'keyword')
+                result.matched_keywords = list(matched_terms)
+            except Exception as e:
+                self.logger.warning(f"Keyword matching failed, falling back to other methods: {str(e)}")
+                result.keyword_score = 0.0
+                result.matched_keywords = []
+            
+            # Step 2: Try semantic matching with error recovery and chatbot context
+            try:
+                # Add chatbot context to semantic matching
+                enhanced_use_case_text = use_case.combined_text
+                if is_chatbot:
+                    enhanced_use_case_text += " This system implements conversational AI capabilities for natural language interaction."
+                    
+                semantic_score = self.calculate_semantic_score(
+                    enhanced_use_case_text,
+                    category.combined_text
+                )
+                result.semantic_score = validate_score(semantic_score, 'semantic')
+                result.semantic_details = f"Semantic similarity score: {result.semantic_score:.3f}"
+            except Exception as e:
+                self.logger.warning(f"Semantic matching failed, falling back to other methods: {str(e)}")
+                result.semantic_score = 0.0
+                result.semantic_details = f"Semantic matching failed: {str(e)}"
+            
+            # Determine if LLM verification is needed
             should_try_llm = (
-                (keyword_score >= 0.1) or  # Any meaningful keyword score
-                (semantic_score >= 0.15)    # Any meaningful semantic score
+                (result.semantic_score >= 0.6 and not result.matched_keywords) or
+                (result.semantic_score >= 0.3 and result.semantic_score < 0.6 and result.matched_keywords) or
+                (result.keyword_score >= 0.3 and result.semantic_score < 0.3) or
+                (result.keyword_score >= 0.8 or result.semantic_score >= 0.8)  # Always verify very strong matches
             )
             
+            # Step 3: Try LLM with retries and error handling
             if should_try_llm:
-                llm_result = self._llm_match(use_case, category)
-                result.llm_score = llm_result[1]
-                result.llm_justification = llm_result[3]
+                max_retries = 2
+                retry_count = 0
+                while retry_count <= max_retries:
+                    try:
+                        llm_result = self._llm_match(use_case, category)
+                        result.llm_score = validate_score(llm_result[1], 'llm')
+                        result.llm_justification = llm_result[3]
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            self.logger.warning(f"LLM attempt {retry_count} failed, retrying: {str(e)}")
+                            time.sleep(1)  # Brief delay before retry
+                        else:
+                            self.logger.error(f"LLM matching failed after {max_retries} attempts: {str(e)}")
+                            result.llm_score = 0.0
+                            result.llm_justification = f"LLM analysis failed: {str(e)}"
             
-            # Calculate final score
-            result.final_score = result.calculate_final_score()
+            # Calculate final score with validation
+            result.final_score = validate_score(result.calculate_final_score(), 'final')
             
-            # Determine the best method
+            # Determine best method and relationship type
             weighted_scores = [
-                (MatchMethod.KEYWORD, keyword_score * Config.METHOD_WEIGHTS['keyword']['score_weight']),
-                (MatchMethod.SEMANTIC, semantic_score * Config.METHOD_WEIGHTS['semantic']['score_weight']),
+                (MatchMethod.KEYWORD, result.keyword_score * Config.METHOD_WEIGHTS['keyword']['score_weight']),
+                (MatchMethod.SEMANTIC, result.semantic_score * Config.METHOD_WEIGHTS['semantic']['score_weight']),
                 (MatchMethod.LLM, result.llm_score * Config.METHOD_WEIGHTS['llm']['score_weight'])
             ]
             
             best_method, best_score = max(weighted_scores, key=lambda x: x[1])
             
-            if best_score >= Config.Thresholds.RELATED:
+            # Validate match criteria
+            has_valid_match = (
+                (result.keyword_score >= Config.Thresholds.KEYWORD) or
+                (result.semantic_score >= Config.Thresholds.SEMANTIC) or
+                (result.llm_score >= Config.Thresholds.LLM)
+            )
+            
+            if has_valid_match and best_score >= Config.Thresholds.RELATED:
                 result.method = best_method
-                result.confidence = best_score
+                result.confidence = validate_score(best_score, 'confidence')
                 result.relationship_type = result.determine_relationship_type(result.final_score)
                 
-                # Build explanation
+                # Build comprehensive explanation
                 explanations = []
                 if result.keyword_score >= Config.Thresholds.KEYWORD:
                     explanations.append(f"Keyword match ({result.keyword_score:.3f})")
@@ -584,15 +893,17 @@ class TextProcessor:
                 if result.llm_score >= Config.Thresholds.LLM:
                     explanations.append(f"LLM match ({result.llm_score:.3f})")
                     if result.llm_justification:
-                        explanations.append(f"LLM says: {result.llm_justification}")
+                        explanations.append(f"LLM analysis: {result.llm_justification}")
                 
                 result.explanation = " | ".join(explanations)
             else:
                 result.method = MatchMethod.NO_MATCH
+                result.relationship_type = RelationType.NO_MATCH
+                result.confidence = 0.0
                 result.explanation = (
-                    f"No significant match found. Scores - "
-                    f"Keyword: {keyword_score:.3f}, "
-                    f"Semantic: {semantic_score:.3f}"
+                    f"No significant match found. Best scores - "
+                    f"Keyword: {result.keyword_score:.3f}, "
+                    f"Semantic: {result.semantic_score:.3f}"
                     + (f", LLM: {result.llm_score:.3f}" if result.llm_score > 0 else "")
                 )
             
@@ -637,9 +948,24 @@ class TextProcessor:
     def _llm_match(self, use_case: UseCase, category: Category) -> tuple[bool, float, RelationType, str]:
         """Use LLM to evaluate match between use case and category"""
         try:
+            # Check for chatbot indicators
+            chatbot_indicators = [
+                'chatbot', 'virtual assistant', 'conversational ai', 'dialogue system',
+                'conversational agent', 'virtual agent', 'conversational interface',
+                'interactive assistant', 'chat interface', 'messaging interface'
+            ]
+            is_chatbot = any(indicator in use_case.combined_text.lower() for indicator in chatbot_indicators)
+            
+            # Enhanced prompt with chatbot context
             prompt = f"""
             Evaluate if this federal use case matches the AI technology category.
             First provide a confidence score between 0 and 100, then explain your reasoning.
+            
+            {
+                "For chatbot/conversational AI systems, consider both the natural language processing capabilities and the end-user interaction aspects."
+                if is_chatbot else ""
+            }
+            
             Format your response as:
             Score: [0-100]
             Explanation: [your detailed explanation]
@@ -649,6 +975,11 @@ class TextProcessor:
             
             Category: {category.name}
             Description: {category.combined_text}
+            
+            {
+                "Note: For chatbot systems, consider both primary capabilities (NLP) and secondary aspects (user interaction)."
+                if is_chatbot else ""
+            }
             """
             
             response = self.openai_client.chat.completions.create(
@@ -668,6 +999,11 @@ class TextProcessor:
                 score_line = answer.split('\n')[0]
                 score = float(re.search(r'score:\s*(\d+)', score_line).group(1)) / 100
                 explanation = ' '.join(answer.split('\n')[1:])
+                
+                # Apply chatbot-specific boost for relevant categories
+                if is_chatbot and category.name in ['Natural Language Processing (NLP)', 'Intelligent End-User Computing']:
+                    score = min(1.0, score * 1.15)  # 15% boost
+                    
             except:
                 # Fallback to binary scoring if parsing fails
                 score = 0.8 if "yes" in answer else 0.0
@@ -737,8 +1073,8 @@ def setup_logging() -> None:
     file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     console_formatter = logging.Formatter('%(message)s')  # Simplified console output
     
-    # Set up file handler
-    file_handler = logging.FileHandler(log_file)
+    # Set up file handler with UTF-8 encoding
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setFormatter(file_formatter)
     file_handler.setLevel(logging.DEBUG)
     
@@ -760,7 +1096,7 @@ def setup_logging() -> None:
 
 # Configuration class
 class Config:
-    """Configuration settings"""
+    """Configuration settings with optimized thresholds"""
     # Neo4j settings
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
@@ -775,31 +1111,31 @@ class Config:
     
     # Scoring thresholds for cascading evaluation
     class Thresholds:
-        KEYWORD = 0.15     # Lowered to be more lenient
-        SEMANTIC = 0.20    # Lowered significantly
-        LLM = 0.50        # Keep as is
+        KEYWORD = 0.35     # Slightly increased for more precision
+        SEMANTIC = 0.40    # Increased to ensure stronger semantic matches
+        LLM = 0.45        # Slightly lowered to better utilize LLM insights
         
-        # Relationship type thresholds
-        PRIMARY = 0.65     # Lowered to get more primary matches
-        SECONDARY = 0.50   # Lowered to get more secondary matches
-        RELATED = 0.35    # Keep as is for related matches
+        # Relationship type thresholds adjusted for better distribution
+        PRIMARY = 0.75     # Increased to make more selective
+        SECONDARY = 0.45   # Lowered to capture more mid-range matches
+        RELATED = 0.35    # Maintained for broad coverage
     
-    # Method weights for final score calculation
+    # Method weights optimized based on performance analysis
     METHOD_WEIGHTS = {
         'keyword': {
-            'score_weight': 1.4,    # Increased to strongly prioritize keywords
+            'score_weight': 1.2,    # Slightly reduced but still prioritized
             'confidence': 'HIGH',
-            'boost_factor': 0.25    # Increased boost for keywords
+            'boost_factor': 0.20    # Increased for strong keyword matches
         },
         'semantic': {
-            'score_weight': 0.9,    # Reduced to prefer keywords
+            'score_weight': 1.0,    # Increased for better balance
             'confidence': 'MEDIUM',
             'boost_factor': 0.15
         },
         'llm': {
-            'score_weight': 0.8,    # Keep reduced
+            'score_weight': 0.9,    # Increased slightly
             'confidence': 'VARIABLE',
-            'boost_factor': 0.10
+            'boost_factor': 0.12
         }
     }
 
@@ -893,12 +1229,34 @@ def format_agency_name(name: str) -> str:
     )
 
 def create_detailed_result(result: MatchResult, use_case: UseCase, category: Category) -> dict:
-    """Create a detailed result entry"""
+    """Create a detailed result entry with validated scores and cleaned text"""
+    # Validate and fix scores
+    scores = {
+        'keyword_score': result.keyword_score,
+        'semantic_score': result.semantic_score,
+        'llm_score': result.llm_score,
+        'final_score': result.final_score,
+        'confidence': result.confidence
+    }
+    
+    for key, value in scores.items():
+        # Convert to float and validate range
+        try:
+            value = float(value)
+            if value < 0 or value > 1:
+                logging.warning(f"Invalid {key}: {value}, clamping to [0,1]")
+                value = max(0, min(1, value))
+            scores[key] = round(value, 3)
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid {key} value: {value}, defaulting to 0.0")
+            scores[key] = 0.0
+    
     return {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'use_case_id': result.use_case_id,
         'use_case_name': clean_text(use_case.name if use_case else None),
         'agency': clean_text(use_case.agency if use_case else None),
+        'abbreviation': clean_text(use_case.abbreviation if use_case else None, preserve_case=True),
         'bureau': clean_text(use_case.bureau if use_case else None),
         'topic_area': clean_text(use_case.topic_area if use_case else None),
         'dev_stage': clean_text(use_case.dev_stage if use_case else None),
@@ -909,11 +1267,11 @@ def create_detailed_result(result: MatchResult, use_case: UseCase, category: Cat
         'category_zone': clean_text(category.zone if category else None),
         'match_method': result.method.value,
         'relationship_type': result.relationship_type.value,
-        'keyword_score': f"{result.keyword_score:.3f}",
-        'semantic_score': f"{result.semantic_score:.3f}",
-        'llm_score': f"{result.llm_score:.3f}",
-        'final_score': f"{result.final_score:.3f}",
-        'confidence': f"{result.confidence:.3f}",
+        'keyword_score': f"{scores['keyword_score']:.3f}",
+        'semantic_score': f"{scores['semantic_score']:.3f}",
+        'llm_score': f"{scores['llm_score']:.3f}",
+        'final_score': f"{scores['final_score']:.3f}",
+        'confidence': f"{scores['confidence']:.3f}",
         'matched_keywords': ', '.join(result.matched_keywords) if result.matched_keywords else '',
         'semantic_details': clean_text(result.semantic_details) if result.semantic_details else '',
         'llm_justification': clean_text(result.llm_justification) if result.llm_justification else '',
@@ -999,14 +1357,87 @@ def create_match_preview(result: MatchResult, use_case: UseCase, category: Categ
         'match_scoring': clean_text(match_scoring)
     }
 
+def save_no_match_analysis(
+    analysis: NoMatchAnalysis,
+    output_dir: Path,
+    format: str = 'json'  # or 'csv'
+) -> None:
+    """Save no-match analysis to appropriate files"""
+    # Use the base output directory for no-match analysis
+    base_output_dir = Path("data/output")
+    analysis_dir = base_output_dir / 'no_match_analysis'
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories by reason category
+    reason_dir = analysis_dir / analysis.reason_category.lower()
+    reason_dir.mkdir(exist_ok=True)
+    
+    # Create monthly directory for organization
+    month_dir = reason_dir / analysis.timestamp[:6]  # YYYYMM
+    month_dir.mkdir(exist_ok=True)
+    
+    if format == 'json':
+        # Save individual analysis as JSON
+        file_path = month_dir / f"{analysis.use_case_id}_{analysis.timestamp}.json"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(asdict(analysis), f, indent=2, ensure_ascii=False)
+    
+    # Also append to monthly CSV for easy analysis
+    csv_path = month_dir / f"no_match_summary_{analysis.timestamp[:6]}.csv"
+    df = pd.DataFrame([asdict(analysis)])
+    
+    if csv_path.exists():
+        df.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8')
+    else:
+        df.to_csv(csv_path, index=False, encoding='utf-8')
+
+def parse_llm_analysis(analysis_text: str) -> Tuple[str, str, List[str]]:
+    """Parse LLM analysis into structured components"""
+    try:
+        # Extract the main reason category
+        reason_patterns = {
+            'NOVEL_TECH': r'Novel/Emerging Technology',
+            'IMPLEMENTATION_SPECIFIC': r'Implementation Specific',
+            'NON_AI': r'Non-AI Technology',
+            'UNCLEAR_DESC': r'Unclear Description',
+            'OTHER': r'Other'
+        }
+        
+        reason_category = 'OTHER'
+        for category, pattern in reason_patterns.items():
+            if re.search(pattern, analysis_text, re.IGNORECASE):
+                reason_category = category
+                break
+        
+        # Extract improvement suggestions
+        suggestions_match = re.search(r'improvement suggestions:(.*?)(?=\n\n|$)', 
+                                    analysis_text, 
+                                    re.IGNORECASE | re.DOTALL)
+        improvement_suggestions = suggestions_match.group(1).strip() if suggestions_match else ""
+        
+        # Extract potential new categories
+        categories_match = re.search(r'categories we should consider adding:(.*?)(?=\n|$)',
+                                   analysis_text,
+                                   re.IGNORECASE | re.DOTALL)
+        potential_categories = []
+        if categories_match:
+            categories_text = categories_match.group(1)
+            potential_categories = [c.strip() for c in categories_text.split(',') if c.strip()]
+        
+        return reason_category, improvement_suggestions, potential_categories
+        
+    except Exception as e:
+        logging.error(f"Failed to parse LLM analysis: {str(e)}")
+        return 'OTHER', '', []
+
 def save_results_to_csv(
     results: List[MatchResult], 
     use_cases: Dict[str, UseCase],
     categories: Dict[str, Category],
     output_dir: Path,
-    text_processor: TextProcessor  # Add text_processor parameter
+    text_processor: TextProcessor
 ) -> Tuple[str, str]:
-    """Save match results to CSV files"""
+    """Save match results to CSV files with proper data validation"""
     # Group results by use case
     use_case_results = {}
     for result in results:
@@ -1040,52 +1471,112 @@ def save_results_to_csv(
                     create_match_preview(match, use_case, category)
                 )
         else:
+            # Get best scores from all results for this use case
+            best_scores = {
+                'keyword': max(r.keyword_score for r in case_results),
+                'semantic': max(r.semantic_score for r in case_results),
+                'llm': max(r.llm_score for r in case_results)
+            }
+            
             # Get LLM analysis for unmatched use case
-            analysis = text_processor._analyze_unmatched_usecase(use_case)
-            
-            # Use the official agency abbreviation
-            agency_abr = clean_text(use_case.abbreviation, preserve_case=True).upper() if use_case.abbreviation else ""
-            
-            # Format purpose benefits and outputs
-            purpose_benefits = '; '.join(use_case.purposes) if use_case.purposes else ""
-            outputs = '; '.join(use_case.outputs) if use_case.outputs else ""
-            
-            # Create single no-match entry with analysis
-            best_scores = max(case_results, key=lambda x: x.final_score)
-            match_details = (
-                f"Best scores - Keyword: {best_scores.keyword_score:.2f}, "
-                f"Semantic: {best_scores.semantic_score:.2f}, "
-                f"LLM: {best_scores.llm_score:.2f}"
-            )
-            
-            neo4j_preview.append({
-                'agency': clean_text(use_case.agency, preserve_case=True).upper(),
-                'abr': agency_abr,
-                'topic_area': clean_text(use_case.topic_area, preserve_case=True),
-                'use_case_name': clean_text(use_case.name, preserve_case=True),
-                'purpose_benefits': clean_text(purpose_benefits),
-                'outputs': clean_text(outputs),
-                'category_name': 'NO MATCH',
-                'relationship_type': 'no_match',
-                'confidence': '0.0%',
-                'match_method': 'no_match',
-                'match_details': match_details,
-                'match_scoring': analysis
-            })
+            try:
+                analysis_text = text_processor._analyze_unmatched_usecase(use_case)
+                
+                # Parse the analysis
+                reason_category, improvements, potential_cats = parse_llm_analysis(analysis_text)
+                
+                # Create and save no-match analysis
+                no_match_analysis = NoMatchAnalysis(
+                    timestamp=datetime.now().strftime('%Y%m%d_%H%M%S'),
+                    use_case_id=use_case.id,
+                    use_case_name=use_case.name,
+                    agency=use_case.agency,
+                    abbreviation=use_case.abbreviation,
+                    bureau=use_case.bureau,
+                    topic_area=use_case.topic_area,
+                    dev_stage=use_case.dev_stage,
+                    purposes=use_case.purposes,
+                    outputs=use_case.outputs,
+                    best_scores=best_scores,
+                    reason_category=reason_category,
+                    llm_analysis=analysis_text,
+                    improvement_suggestions=improvements,
+                    potential_categories=potential_cats
+                )
+                
+                save_no_match_analysis(no_match_analysis, output_dir)
+                
+                # Create no-match preview entry
+                neo4j_preview.append({
+                    'agency': clean_text(use_case.agency, preserve_case=True).upper(),
+                    'abr': clean_text(use_case.abbreviation, preserve_case=True).upper() if use_case.abbreviation else "",
+                    'topic_area': clean_text(use_case.topic_area, preserve_case=True),
+                    'use_case_name': clean_text(use_case.name, preserve_case=True),
+                    'purpose_benefits': '; '.join(use_case.purposes) if use_case.purposes else "",
+                    'outputs': '; '.join(use_case.outputs) if use_case.outputs else "",
+                    'category_name': 'NO MATCH',
+                    'relationship_type': 'no_match',
+                    'confidence': '0.0%',
+                    'match_method': 'no_match',
+                    'match_details': f"Best scores - Keyword: {best_scores['keyword']:.3f}, Semantic: {best_scores['semantic']:.3f}, LLM: {best_scores['llm']:.3f}",
+                    'match_scoring': analysis_text
+                })
+                
+            except Exception as e:
+                logging.error(f"Failed to analyze unmatched use case {use_case.name}: {str(e)}")
+                analysis_text = "Analysis failed due to error"
+                
+                # Still create a preview entry even if analysis fails
+                neo4j_preview.append({
+                    'agency': clean_text(use_case.agency, preserve_case=True).upper(),
+                    'abr': clean_text(use_case.abbreviation, preserve_case=True).upper() if use_case.abbreviation else "",
+                    'topic_area': clean_text(use_case.topic_area, preserve_case=True),
+                    'use_case_name': clean_text(use_case.name, preserve_case=True),
+                    'purpose_benefits': '; '.join(use_case.purposes) if use_case.purposes else "",
+                    'outputs': '; '.join(use_case.outputs) if use_case.outputs else "",
+                    'category_name': 'NO MATCH',
+                    'relationship_type': 'no_match',
+                    'confidence': '0.0%',
+                    'match_method': 'error',
+                    'match_details': 'Analysis failed',
+                    'match_scoring': str(e)
+                })
     
-    # Save files
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    detailed_file = output_dir / f"tech_eval_detailed_{timestamp}.csv"
-    pd.DataFrame(detailed_results).to_csv(detailed_file, index=False, encoding='utf-8')
-    
-    preview_file = output_dir / f"tech_eval_neo4j_preview_{timestamp}.csv"
-    pd.DataFrame(neo4j_preview).to_csv(preview_file, index=False, encoding='utf-8')
-    
-    logging.info(f"[+] Detailed results saved to: {detailed_file}")
-    logging.info(f"[+] Neo4j preview saved to: {preview_file}")
-    
-    return str(detailed_file), str(preview_file)
+    # Create DataFrames with proper data validation
+    try:
+        # Create detailed results DataFrame
+        detailed_df = pd.DataFrame(detailed_results)
+        
+        # Create preview DataFrame
+        preview_df = pd.DataFrame(neo4j_preview)
+        
+        # Save files with UTF-8 encoding and proper error handling
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Save detailed results
+        detailed_file = output_dir / f"ai_tech_classification_neo4j_{timestamp}.csv"
+        try:
+            detailed_df.to_csv(detailed_file, index=False, encoding='utf-8')
+        except Exception as e:
+            logging.error(f"Failed to save detailed results: {str(e)}")
+            raise
+        
+        # Save preview results
+        preview_file = output_dir / f"ai_tech_classification_preview_{timestamp}.csv"
+        try:
+            preview_df.to_csv(preview_file, index=False, encoding='utf-8')
+        except Exception as e:
+            logging.error(f"Failed to save preview results: {str(e)}")
+            raise
+        
+        logging.info(f"[+] Detailed results saved to: {detailed_file}")
+        logging.info(f"[+] Neo4j preview saved to: {preview_file}")
+        
+        return str(detailed_file), str(preview_file)
+        
+    except Exception as e:
+        logging.error(f"Failed to create or save DataFrames: {str(e)}")
+        raise
 
 def main():
     """Main execution function"""

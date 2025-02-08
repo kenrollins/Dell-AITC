@@ -1,274 +1,191 @@
 # Neo4j Database Schema Documentation
 
-## Overview
+Generated at: 2025-02-06T21:38:02.323560
 
-### Node Summary
+## Node Labels
 
-| Label | Count |
-|-------|-------|
-| AICategory | 14 |
-| Keyword | 237 |
-| Capability | 178 |
-| Zone | 4 |
-| IntegrationPattern | 70 |
-| Version | 1 |
-| Metadata | 1 |
-| UseCase | 2,052 |
-| Agency | 42 |
-| Bureau | 325 |
-| Output | 1,709 |
-| PurposeBenefit | 2,094 |
-| EvaluationRun | 0 |
-| System | 322 |
+The following node labels are defined in the database:
 
-### Relationship Summary
+### :AICategory
 
-| Type | Count |
-|------|-------|
-| BELONGS_TO | 14 |
-| TAGGED_WITH | 242 |
-| HAS_CAPABILITY | 192 |
-| DEPENDS_ON | 24 |
-| INTEGRATES_VIA | 84 |
-| CURRENT_VERSION | 1 |
-| IMPLEMENTS | 0 |
-| HAS_BUREAU | 336 |
-| HAS_USE_CASE | 2,052 |
-| USES_SYSTEM | 768 |
-| HAS_PURPOSE | 2,213 |
-| PRODUCES | 2,074 |
-
-## Node Labels and Properties
-
-### AICategory
-
+Properties:
 | Property | Type |
 |----------|------|
-| id | str |
-| status | str |
-| maturity_level | str |
-| name | str |
-| created_at | DateTime |
-| last_updated | DateTime |
-| category_definition | str |
-| zone | str |
+| id | string |
+| status | string |
+| maturity_level | string |
+| name | string |
+| created_at | unknown |
+| last_updated | unknown |
+| category_definition | string |
+| zone | string |
 
-### Keyword
+### :Keyword
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| name | string |
 
-### Capability
+### :Capability
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| name | string |
 
-### Zone
+### :Zone
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| name | string |
 
-### IntegrationPattern
+### :IntegrationPattern
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| name | string |
 
-### Version
+### :Version
 
+Properties:
 | Property | Type |
 |----------|------|
-| author | str |
-| created_at | DateTime |
-| number | str |
-| changes | str |
+| author | string |
+| created_at | unknown |
+| number | string |
+| changes | string |
 
-### Metadata
+### :Metadata
 
+Properties:
 | Property | Type |
 |----------|------|
-| description | str |
-| last_updated | DateTime |
-| schema_version | str |
-| version | str |
+| description | string |
+| last_updated | unknown |
+| schema_version | string |
+| version | string |
 
-### UseCase
+### :UseCase
 
+Properties:
 | Property | Type |
 |----------|------|
-| has_ato | bool |
-| topic_area | str |
-| updated_at | DateTime |
-| contains_pii | bool |
-| date_initiated | str |
-| name | str |
-| agency | str |
-| purpose_benefits | str |
-| outputs | str |
-| dev_stage | str |
-| infrastructure | str |
+| has_ato | boolean |
+| topic_area | string |
+| updated_at | unknown |
+| contains_pii | boolean |
+| date_initiated | string |
+| name | string |
+| agency | string |
+| purpose_benefits | string |
+| outputs | string |
+| dev_stage | string |
+| infrastructure | string |
 
-### Agency
+### :Agency
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
-| abbreviation | str |
+| name | string |
+| abbreviation | string |
 
-### Bureau
+### :Bureau
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| name | string |
 
-### Output
+### :Output
 
+Properties:
 | Property | Type |
 |----------|------|
-| description | str |
+| description | string |
 
-### PurposeBenefit
+### :PurposeBenefit
 
+Properties:
 | Property | Type |
 |----------|------|
-| description | str |
+| description | string |
 
-### EvaluationRun
+### :System
 
+Properties:
 | Property | Type |
 |----------|------|
+| name | string |
 
-### System
+### :SchemaMetadata
 
+Properties:
 | Property | Type |
 |----------|------|
-| name | str |
+| id | string |
+| supported_investment_stages | list |
+| supported_agency_types | list |
+| supported_use_case_statuses | list |
+| supported_match_methods | list |
+| last_updated | unknown |
+| supported_relationship_types | list |
+| version | string |
 
 ## Relationship Types
 
-### HAS_PURPOSE
+The following relationship types are defined in the database:
 
-Patterns:
+### :BELONGS_TO
 
-- (UseCase) -> (PurposeBenefit) [2,213 instances]
+No properties defined.
 
-### PRODUCES
+### :TAGGED_WITH
 
-Patterns:
+Properties:
+| Property | Type |
+|----------|------|
+| weight | integer |
 
-- (UseCase) -> (Output) [2,074 instances]
+### :HAS_CAPABILITY
 
-### HAS_USE_CASE
+No properties defined.
 
-Patterns:
+### :DEPENDS_ON
 
-- (Agency) -> (UseCase) [2,052 instances]
+Properties:
+| Property | Type |
+|----------|------|
+| created_at | unknown |
+| cross_zone | boolean |
 
-### USES_SYSTEM
+### :INTEGRATES_VIA
 
-Patterns:
+No properties defined.
 
-- (UseCase) -> (System) [768 instances]
+### :CURRENT_VERSION
 
-### HAS_BUREAU
+No properties defined.
 
-Patterns:
+### :HAS_BUREAU
 
-- (Agency) -> (Bureau) [336 instances]
+No properties defined.
 
-### TAGGED_WITH
+### :HAS_USE_CASE
 
-Patterns:
+No properties defined.
 
-- (AICategory) -> (Keyword) [242 instances]
+### :USES_SYSTEM
 
-### HAS_CAPABILITY
+No properties defined.
 
-Patterns:
+### :HAS_PURPOSE
 
-- (AICategory) -> (Capability) [192 instances]
+No properties defined.
 
-### INTEGRATES_VIA
+### :PRODUCES
 
-Patterns:
-
-- (AICategory) -> (IntegrationPattern) [84 instances]
-
-### DEPENDS_ON
-
-Patterns:
-
-- (AICategory) -> (AICategory) [24 instances]
-
-### BELONGS_TO
-
-Patterns:
-
-- (AICategory) -> (Zone) [14 instances]
-
-### CURRENT_VERSION
-
-Patterns:
-
-- (Metadata) -> (Version) [1 instances]
-
-## Constraints
-
-| Name | Type | For | Properties |
-|------|------|-----|------------|
-| agency_name | UNIQUENESS |  | name |
-| ai_category_id | UNIQUENESS |  | id |
-| bureau_name | UNIQUENESS |  | name |
-| capability_name | UNIQUENESS |  | name |
-| evaluation_run_id | UNIQUENESS |  | run_id |
-| keyword_name | UNIQUENESS |  | name |
-| output_composite | UNIQUENESS |  | description, agency |
-| purpose_benefit_composite | UNIQUENESS |  | description, agency |
-| system_name | UNIQUENESS |  | name |
-| use_case_composite | UNIQUENESS |  | name, agency |
-| zone_name | UNIQUENESS |  | name |
-
-## Indexes
-
-| Name | Type | For | Properties |
-|------|------|-----|------------|
-| agency_name | RANGE |  | name |
-| ai_category_id | RANGE |  | id |
-| ai_category_name | RANGE |  | name |
-| ai_category_zone | RANGE |  | zone |
-| bureau_name | RANGE |  | name |
-| capability_name | RANGE |  | name |
-| evaluation_run_id | RANGE |  | run_id |
-| evaluation_timestamp | RANGE |  | timestamp |
-| index_343aff4e | LOOKUP |  |  |
-| index_f7700477 | LOOKUP |  |  |
-| keyword_name | RANGE |  | name |
-| output_composite | RANGE |  | description, agency |
-| purpose_benefit_composite | RANGE |  | description, agency |
-| system_name | RANGE |  | name |
-| use_case_agency | RANGE |  | agency |
-| use_case_composite | RANGE |  | name, agency |
-| use_case_confidence | RANGE |  | confidence |
-| use_case_match_method | RANGE |  | match_method |
-| use_case_match_score | RANGE |  | final_score |
-| use_case_topic | RANGE |  | topic_area |
-| zone_name | RANGE |  | name |
-
-## Common Patterns
-
-| Source | Relationship | Target | Frequency |
-|--------|--------------|--------|------------|
-| UseCase | HAS_PURPOSE | PurposeBenefit | 2,213 |
-| UseCase | PRODUCES | Output | 2,074 |
-| Agency | HAS_USE_CASE | UseCase | 2,052 |
-| UseCase | USES_SYSTEM | System | 768 |
-| Agency | HAS_BUREAU | Bureau | 336 |
-| AICategory | TAGGED_WITH | Keyword | 242 |
-| AICategory | HAS_CAPABILITY | Capability | 192 |
-| AICategory | INTEGRATES_VIA | IntegrationPattern | 84 |
-| AICategory | DEPENDS_ON | AICategory | 24 |
-| AICategory | BELONGS_TO | Zone | 14 |
-| Metadata | CURRENT_VERSION | Version | 1 |
+No properties defined.
