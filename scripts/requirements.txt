@@ -1,9 +1,21 @@
-neo4j-driver>=5.0
+neo4j-driver>=5.14.0
 sentence-transformers>=2.0
 openai>=1.0
-python-dotenv>=1.0
+python-dotenv>=1.0.0
 pandas>=2.0
 numpy>=1.20
 matplotlib>=3.0
 seaborn>=0.12
-tqdm>=4.0 
+tqdm>=4.0
+logging>=0.4.9.6
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+docker>=6.0.0
+
+# Code quality
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+types-all>=1.0.0  # Type stubs for common packages 

@@ -1,17 +1,19 @@
-# Dell-AITC Neo4j Schema v2.1.2
+# Dell-AITC Neo4j Schema v2.1
 
 ## Overview
 This schema defines the structure for the Dell-AITC AI Technology Categorization system, focusing on mapping federal AI use cases to technology categories.
 
 ## Version Information
 ```yaml
-Version: 2.1.2
-Status: Released
+Version: 2.1.0
+Status: Draft
 Last Updated: 2024-02
-Changes from v2.1.1:
-  - Updated Agency node constraints
-  - Enhanced boolean field handling
-  - Improved data loading optimization
+Changes from v2.0:
+  - Added UseCase node type for federal inventory data
+  - Added Agency and Bureau nodes
+  - Enhanced relationship properties
+  - Added validation rules for federal data
+  - Improved indexing strategy
 ```
 
 ## Domain Model

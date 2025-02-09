@@ -8,12 +8,7 @@ This is a local AI-driven technology categorization system that evaluates and cl
 ## Context
 - "Neo4j Schema Details": "When generating Cypher queries, always follow the node properties and relationships from docs/neo4j_schema/neo4j_schema_documentation.md and docs/neo4j_schema/neo4j_schema.json
 
-## General Project Structure
-- Follow a clean, modular architecture with clearly defined layers
-- use environment variables (.env) to store API keys, DB credentials, and configurations
-- keep dependencies minimal and only install what is necessary
-- Structure repository files as follows:
-
+## Project Structure
 ```
 Dell-AITC/
 │── backend/              # FastAPI backend
@@ -24,6 +19,8 @@ Dell-AITC/
 │   │   ├── config.py     # Configuration settings
 │   │   ├── main.py       # Entry point for FastAPI
 │   │   ├── dependencies.py  # Common dependencies (DB, AI models)
+│   │   ├── api_docs/     # API documentation
+│   │   └── ...           # Rest of the backend structure
 │   ├── requirements.txt  # Python dependencies
 │   ├── Dockerfile        # Docker configuration for backend
 │   ├── .env              # Environment variables
@@ -34,6 +31,7 @@ Dell-AITC/
 │   │   ├── pages/        # Next.js pages (index.tsx, etc.)
 │   │   ├── styles/       # Tailwind CSS styles
 │   │   ├── utils/        # Helper functions
+│   │   └── ...           # Rest of the frontend structure
 │   ├── public/           # Static assets
 │   ├── package.json      # Node.js dependencies
 │   ├── next.config.js    # Next.js config
@@ -42,181 +40,176 @@ Dell-AITC/
 │── data/                 # Data storage (CSV, Excel)
 │   ├── input/            # Raw input files
 │   ├── output/           # Processed results
-│
-│── notebooks/            # Jupyter notebooks for reference
-│   ├── analysis.ipynb    # Notebook for testing AI categorization
-│
+│── data_backup/          # Backup of critical data
+│── deprecated/           # Archived code and documentation
 │── docs/                 # Documentation
-│   ├── requirements.md   # Project requirements
-│   ├── design.md         # Design documents
-│   ├── implementation.md # Implementation notes
-│   ├── testing.md        # Testing strategy
-│   ├── troubleshooting.md # Troubleshooting guide
-│   ├── neo4j/            # Neo4j schema design
-|
-│── scripts/              # Experimental scripts go here
-|
-│── docker-compose.yml    # Docker configuration for running services
-│── .gitignore            # Ignore unnecessary files
-│── README.md             # Project documentation
-
-
+│   ├── neo4j/            # Neo4j schema design and versioning
+│   │   ├── schema_planning/  # Schema version planning
+│   │   ├── current/     # Current schema version
+│   │   └── ...           # Rest of the docs structure
+│   ├── fed_use_case/    # Federal use case documentation
+│   ├── project_tracking/ # Project management docs
+│   └── ...               # Rest of the docs structure
+│── notebooks/            # Jupyter notebooks
+│── scripts/              # Utility and experimental scripts
+│── .github/             # GitHub specific configurations
+│── QUICKSTART.md        # Quick start guide
+│── CHEATSHEET.md        # Common commands and patterns
+│── docker-compose.yml   
+│── .env.example         # Template for environment variables
+│── .gitignore           # Ignore unnecessary files
+│── README.md            # Project documentation
 ```
 
 ## Tech Stack
-- Next.js
-- TypeScript
-- TailwindCSS
-- FastAPI
-- Python
-- Neo4j
-- Docker
-- Ollama
-- OpenAI
-- Pydantic
-- Axios
-- SWR
-- React
-- ESLint
-- Prettier
-- Black
-- dotenv
-- logging
+- Next.js with TypeScript
+- FastAPI with Python
+- Neo4j Database
+- Docker & Docker Compose
+- Ollama (Local AI)
+- OpenAI API (Fallback)
+- Frontend: React, TailwindCSS, Shadcn UI, SWR
+- Development: ESLint, Prettier, Black
+- Infrastructure: dotenv, logging
 
 ## Naming Conventions
-- Use lowercase with dashes for directories (e.g., compontents/form-wizard)
-- Favor named exports for components and utilities
-- Use PascalCase for component files (e.g., VisaForm.tsx)
+- Use lowercase with dashes for directories (e.g., components/form-wizard)
+- Use PascalCase for component files (e.g., FormWizard.tsx)
 - Use camelCase for utility files (e.g., formValidator.ts)
+- Favor named exports for components and utilities
 
-## TypeScript Usage
-- Use TypeScript for all code; prefer interfaces over types
-- Avoid enums; use const objects with 'as const' assertion
+## TypeScript Guidelines
+- Use interfaces over types
+- Use const objects with 'as const' instead of enums
 - Use functional components with TypeScript interfaces
-- Define strict types for message passing between different parts of the extension
-- Use absolute imports for all files @/...
-- Avoid try/catch blocks unless there's good reason to translate or handle errors in that abstraction
+- Use absolute imports with @/...
 - Use explicit return types for all functions
+- Avoid unnecessary try/catch blocks
 
-## State Management
-- Use React Context for global state when needed
-- Implement proper state persistence using chrome.storage (for extension)
-- Implement proper cleanup in useEffect hooks
+## Frontend Development
+- Use Shadcn UI components with `npx shadcn@latest add <component-name>`
+- Implement Tailwind CSS for styling (no inline styles)
+- Use React Context for global state
+- Centralize API calls in utils/api.ts
+- Use SWR for data fetching
+- Implement error boundaries
+- Use proper cleanup in useEffect hooks
 
-## Syntax and Formatting
-- Use "function" keyword for pure functions
-- Avoid unnecessary curly braces in conditionals
-- Use declarative JSX
-- Implement proper TypeScript discriminated unions for message types
+## Performance Guidelines
+- Implement code splitting
+- Use lazy loading for non-critical components
+- Implement proper caching strategies
+- Clean up event listeners and observers
 
-## UI and Styling
-- Use Shadcn UI and Radix for components
-- use `npx shadcn@latest add <component-name>` to add new shadcn components
-- Implement Tailwind CSS for styling
-- Consider extension-specific constraints (popup dimensions, permissions)
-- Follow Material Design guidelines for Chrome extensions
-- When adding new shadcn component, document the installation command
-
-## Performance Optimization
-- Minimize bundle size using code splitting
-- Implement proper lazy loading for non-critical components
-- Optimize content script injection
-- User proper caching strategies
-- Implement proper cleanup for event listeners and observers
-
-## Error Handling
-- Implement proper error boundaries
-
-## Testing
+## Testing Requirements
 - Write unit tests for utilities and components
 - Implement E2E tests for critical flows
-- Test across different Chrome versions
 - Test memory usage and performance
 
-## Security
+## Security Standards
+- Use environment variables for sensitive data
 - Implement Content Security Policy
-- Sanitize user inputs
-- Handle sensitive data properly
-- Follow Chrome extension security best practices
-- Implement proper CORS handling
+- Sanitize all user inputs
+- Follow proper CORS handling
 
-## Git Usage
+## Git Workflow
 Commit Message Prefixes:
 - "fix:" for bug fixes
 - "feat:" for new features
 - "perf:" for performance improvements
-- "docs:" for documentation changes
-- "style:" for formatting changes
+- "docs:" for documentation
+- "style:" for formatting
 - "refactor:" for code refactoring
-- "test:" for adding missing tests
-- "chore:" for maintenance tasks
+- "test:" for adding tests
+- "chore:" for maintenance
 
 Rules:
-- Use lowercase for commit messages
-- Keep the summary line consise (50-72 characters)
-- Include description for non-obvious changes
+- Use lowercase for messages
+- Keep summary line under 72 characters
 - Reference issue numbers when applicable
 
-## Documentation
-- Maintain clear README with setup instructions
-- Document API interactions and data flows
-- Keep manifest.json well-documented
-- Include comments for complex logic
-- Document permission requirements
+## Dynamic Rules Management
+- Add rules via commit messages: "rule: category: description"
+- Add conventions via PR descriptions: "convention: category: description"
+- Monitor /docs for new standards
+- Track breaking changes in CHANGELOG.md
 
-## Development Workflow
-- Use proper version control
-- Implement proper code review process
-- Test in multiple environments
-- Follow semantic versioning for releases
-- Maintain changelog
+## Documentation Standards
+- Maintain QUICKSTART.md and CHEATSHEET.md
+- Document schema versions with visualization and JSON
+- Document breaking changes in CHANGELOG.md
+- Document each major feature
+- All scripts must include a documentation block with:
+  ```python
+  """
+  Script Name and Purpose
+  
+  Usage:
+      python script_name.py [options]
+  
+  Options:
+      List all command-line flags and arguments
+  
+  Examples:
+      Practical examples of common use cases
+  
+  Additional Info:
+      Any other relevant details
+  """
+  ```
 
-## Cursor Specific
-- Automatically suggest additions for .cursorrules files where best practices are used during the generation
-- When you are not sure about the rule, you can ask the user for clarification
-- Prioritize using Neo4j best practices when generating Cypher queries.
-- When creating new FastAPI endpoints, ensure API routes match existing Neo4j structures.
+## Schema Version Control
+- Use semantic versioning (MAJOR.MINOR.PATCH)
+- Document changes in docs/neo4j/schema_planning/
+- Include migration scripts for major changes
+- Test changes against existing data
+- Use schema_version_manager.py for all version updates:
+  ```bash
+  # Increment patch (2.1.1 -> 2.1.2)
+  python schema_version_manager.py
+  
+  # Increment minor (2.1.1 -> 2.2.0)
+  python schema_version_manager.py --minor
+  
+  # Increment major (2.1.1 -> 3.0.0)
+  python schema_version_manager.py --major
+  
+  # Set specific version
+  python schema_version_manager.py --version X.Y.Z
+  ```
+  The script will:
+  1. Auto-detect current version
+  2. Backup schema files
+  3. Consolidate changes
+  4. Update documentation
+  5. Reset working changes
 
+## Neo4j Schema Guidelines
+Schema version files must include:
+- Visual representation (SCHEMA_VISUALIZATION_VX.X.md)
+- JSON schema definition (neo4j_schema_vX.X.json)
+- Migration guide
+- Impact analysis
 
-## Python (FastAPI) Backend Guidelines
-- Follow PEP 8 coding style (use black for formatting).
-- Use async functions wherever possible for improved performance.
-- Structure backend with separate directories for:
-	- api/ → FastAPI routes
-	- models/ → Pydantic models
-	- services/ → Business logic (Neo4j queries, AI processing)
-	- dependencies.py → Common app dependencies (DB connections, AI model loaders).
-- Define API routes clearly in api/ with proper request validation via Pydantic.
-- Use dependency injection in FastAPI to manage database and AI services efficiently.
-- Implement logging instead of print statements (use logging module).
-- Use type hints to improve readability and prevent errors.
-- Write unit tests for critical functions (especially AI processing and Neo4j queries).
+## Continuous Integration
+- Validate schema changes
+- Run compatibility tests
+- Validate documentation
+- Check for breaking changes
 
-## Neo4j Database Guidelines
-- Use the official neo4j-driver package instead of raw queries when possible.
-- Optimize queries with indexes and relationships to improve performance.
-- Use batch processing when inserting or updating multiple nodes/relationships.
-- Avoid deeply nested queries—break them into smaller functions for clarity.
-
-## AI Processing Guidelines (Ollama + OpenAI API)
-- Use Ollama for local AI inference first, then fallback to OpenAI API if necessary.
-- Keep AI logic in services/ai_processing.py to separate concerns.
-- Ensure API calls have proper error handling and rate limiting.
-- Cache results when possible to avoid redundant API calls.
-- Log AI decision-making steps for debugging and transparency.
-
-## Next.js (Frontend) Guidelines
-- Use TypeScript for better type safety.
-- Follow a component-based structure (components/ for reusable UI elements).
-- Use Tailwind CSS for styling, avoid inline styles.
-- Use React hooks properly (useState, useEffect, useContext where needed).
-- API calls should be centralized in utils/api.ts for easier maintenance.
-- Use SWR or React Query for efficient API data fetching and caching.
-- Implement error boundaries for handling unexpected frontend errors gracefully.
-
-## DevOps & Code Management Guidelines
-- Use GitHub for version control with clear commit messages.
-- Enforce linting (black for Python, eslint + prettier for Next.js).
-- Use Docker for containerized deployment of Neo4j, FastAPI, and Next.js.
-- Create a .cursorrules file to enforce directory structure and auto-formatting.
+## Schema Change Management
+rule: schema_changes: All schema modifications must follow the schema change process:
+1. Document the change in SCHEMA_CHANGES.md with:
+   - Type and status of change
+   - Impact assessment
+   - Reason for change
+   - Validation requirements
+   - Migration steps
+   - Required documentation updates
+2. Update schema JSON file
+3. Update master schema documentation
+4. Update schema visualization if needed
+5. Create or update migration scripts
+6. Test changes in isolation
+7. Update all affected code
 

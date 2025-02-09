@@ -1,7 +1,7 @@
-# Dell-AITC Schema Visualization v2.1.2
+# Dell-AITC Schema Visualization v2.1
 
 ## Overview
-This document provides a visual representation of the Dell-AITC schema version 2.1.2, focusing on the relationships between AI technology categories and federal use cases.
+This document provides a visual representation of the Dell-AITC schema version 2.1, focusing on the relationships between AI technology categories and federal use cases.
 
 ## Core Domain Structure
 
@@ -61,7 +61,7 @@ erDiagram
     Agency {
         uuid id PK
         string name UK
-        string abbreviation IDX
+        string abbreviation UK
         datetime created_at
         datetime last_updated
     }

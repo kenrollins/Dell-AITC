@@ -1,5 +1,5 @@
 {
-  "version": "2.1.2",
+  "version": "2.1.0",
   "description": "Dell-AITC Schema for 2024 Federal AI Use Cases",
   "nodes": {
     "AICategory": {
