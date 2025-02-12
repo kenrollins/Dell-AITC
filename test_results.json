@@ -1,0 +1,160 @@
+[
+  {
+    "Use Case": "Standardization of Cut Flower Business Names for Message Set Data",
+    "ID": "588f5f82-23a9-40dd-996e-071453d3078a",
+    "Classification": {
+      "Category": "Natural Language Processing & Text Analytics",
+      "Confidence": "106.0%",
+      "Method": "ensemble_high_agreement"
+    },
+    "Scores": {
+      "Keyword": "106.0%",
+      "Semantic": "31.7%",
+      "LLM": "0.0%"
+    },
+    "Matched Keywords": [
+      "natural language processing",
+      "nlp"
+    ]
+  },
+  {
+    "Use Case": "Cross-Laminated Timber (CLT) Knowledge Database",
+    "ID": "ab070a53-090e-4d0f-8480-3fb09d33300a",
+    "Classification": {
+      "Category": "No Match",
+      "Confidence": "8.2%",
+      "Method": "weighted_average"
+    },
+    "Scores": {
+      "Keyword": "0.0%",
+      "Semantic": "20.6%",
+      "LLM": "0.0%"
+    }
+  },
+  {
+    "Use Case": "ChatBot",
+    "ID": "130a8df2-5b25-46f0-ab1a-df818f015646",
+    "Classification": {
+      "Category": "AI Development & Operations (AIOps)",
+      "Confidence": "59.8%",
+      "Method": "keyword_dominant"
+    },
+    "Scores": {
+      "Keyword": "70.3%",
+      "Semantic": "25.7%",
+      "LLM": "0.0%"
+    },
+    "Matched Keywords": [
+      "chatbot"
+    ]
+  },
+  {
+    "Use Case": "LexisNexis",
+    "ID": "72dd29b9-a02d-40e9-b28d-62369966022b",
+    "Classification": {
+      "Category": "No Match",
+      "Confidence": "8.8%",
+      "Method": "weighted_average"
+    },
+    "Scores": {
+      "Keyword": "0.0%",
+      "Semantic": "22.1%",
+      "LLM": "0.0%"
+    }
+  },
+  {
+    "Use Case": "PII Redaction",
+    "ID": "c34f6a1e-22f3-4b64-ace6-803ba6e8c8d0",
+    "Classification": {
+      "Category": "Natural Language Processing & Text Analytics",
+      "Confidence": "81.5%",
+      "Method": "keyword_dominant"
+    },
+    "Scores": {
+      "Keyword": "95.8%",
+      "Semantic": "22.8%",
+      "LLM": "0.0%"
+    },
+    "Matched Keywords": [
+      "named entity recognition",
+      "entity recognition"
+    ]
+  },
+  {
+    "Use Case": "Pact Act Co-Pay Exemption Prediction Tool",
+    "ID": "18f696f1-f372-4ee2-ad66-cd80e61c692b",
+    "Classification": {
+      "Category": "No Match",
+      "Confidence": "4.9%",
+      "Method": "weighted_average"
+    },
+    "Scores": {
+      "Keyword": "0.0%",
+      "Semantic": "12.3%",
+      "LLM": "0.0%"
+    }
+  },
+  {
+    "Use Case": "ZIO PATCH HEART MONITOR",
+    "ID": "b2a46db9-fdab-43f8-89ab-09aefc26c544",
+    "Classification": {
+      "Category": "No Match",
+      "Confidence": "3.5%",
+      "Method": "weighted_average"
+    },
+    "Scores": {
+      "Keyword": "0.0%",
+      "Semantic": "8.7%",
+      "LLM": "0.0%"
+    }
+  },
+  {
+    "Use Case": "CAISY - Artificial Intelligence System Skillsoft Percipio Assessment for the Department Use",
+    "ID": "ec0c2847-46b8-4cba-a8ba-c4de58e63250",
+    "Classification": {
+      "Category": "AI Development & Operations (AIOps)",
+      "Confidence": "55.6%",
+      "Method": "ensemble_high_agreement"
+    },
+    "Scores": {
+      "Keyword": "55.6%",
+      "Semantic": "35.7%",
+      "LLM": "0.0%"
+    },
+    "Matched Keywords": [
+      "intelligent automation"
+    ]
+  },
+  {
+    "Use Case": "Microsoft Power Automate and AI  ",
+    "ID": "280197fa-f0ea-4f8e-847e-41047d21f72f",
+    "Classification": {
+      "Category": "No Match",
+      "Confidence": "10.8%",
+      "Method": "weighted_average"
+    },
+    "Scores": {
+      "Keyword": "0.0%",
+      "Semantic": "27.0%",
+      "LLM": "0.0%"
+    }
+  },
+  {
+    "Use Case": "ARTS - Automated Indirect Cost and Tracking System",
+    "ID": "5439ea8c-649d-4981-855c-515b28961639",
+    "Classification": {
+      "Category": "AI Development & Operations (AIOps)",
+      "Confidence": "51.6%",
+      "Method": "ensemble_high_agreement"
+    },
+    "Scores": {
+      "Keyword": "51.6%",
+      "Semantic": "32.6%",
+      "LLM": "0.0%"
+    },
+    "Matched Keywords": [
+      "generative ai",
+      "chatbot"
+    ]
+  }
+]
