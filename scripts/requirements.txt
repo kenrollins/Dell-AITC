@@ -1,13 +1,16 @@
-neo4j-driver>=5.14.0
+# Core dependencies for list_agency_use_cases.py
+neo4j==5.14.1
+python-dotenv==1.0.0
+tabulate==0.9.0
+
+# Additional project dependencies
 sentence-transformers>=2.0
 openai>=1.0
-python-dotenv>=1.0.0
 pandas>=2.0
 numpy>=1.20
 matplotlib>=3.0
 seaborn>=0.12
 tqdm>=4.0
-logging>=0.4.9.6
 
 # Testing dependencies
 pytest>=7.0.0
