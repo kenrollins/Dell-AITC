@@ -10,29 +10,6 @@ Options:
     --major          Increment major version (X.0.0)
     --minor          Increment minor version (x.Y.0)
     --version X.Y.Z  Set specific version
-    --yes, -y        Skip confirmation prompt
-
-Examples:
-    # Increment patch version (2.1.1 -> 2.1.2)
-    python schema_version_manager.py
-
-    # Increment minor version (2.1.1 -> 2.2.0)
-    python schema_version_manager.py --minor
-
-    # Increment major version (2.1.1 -> 3.0.0)
-    python schema_version_manager.py --major
-
-    # Set specific version
-    python schema_version_manager.py --version 2.1.3
-
-    # Skip confirmation prompt
-    python schema_version_manager.py --yes
-
-Version Numbering:
-    MAJOR.MINOR.PATCH
-    - MAJOR: Breaking changes
-    - MINOR: New features, backward compatible
-    - PATCH: Bug fixes, small changes
 
 The script will:
 1. Automatically detect current version
@@ -238,35 +215,25 @@ For each change:
             backup_dir = self.create_backup(new_version)
             logger.info(f"Created backup at {backup_dir}")
             
-            # Consolidate changes
-            self.consolidate_changes(new_version)
-            
-            # Copy schema files
+            # Source files in version directory
             version_dir = self.schema_planning_dir / f'v{new_version}'
-            
-            file_mapping = {
-                f"SCHEMA_MASTER_V{new_version}.md": "neo4j_schema_documentation.md",
-                f"SCHEMA_VISUALIZATION_V{new_version}.md": "neo4j_schema_visualization.md",
-                f"schema/neo4j_schema_v{new_version}.json": "neo4j_schema.json"
+            source_files = {
+                'SCHEMA_MASTER_V2.2.md': self.neo4j_dir / 'neo4j_schema_documentation.md',
+                'SCHEMA_VISUALIZATION_V2.2.md': self.neo4j_dir / 'neo4j_schema_visualization.md',
+                'schema/neo4j_schema_v2.2.json': self.neo4j_dir / 'neo4j_schema.json'
             }
             
-            for src_name, dest_name in file_mapping.items():
-                src = version_dir / src_name
-                if src.exists():
-                    dest = self.neo4j_dir / dest_name
-                    shutil.copy2(src, dest)
-                    logger.info(f"Updated {dest_name}")
+            # Copy files to master location
+            for src_name, dest_path in source_files.items():
+                src_path = version_dir / src_name
+                if src_path.exists():
+                    logger.info(f"Copying {src_path} to {dest_path}")
+                    shutil.copy2(src_path, dest_path)
                 else:
-                    logger.warning(f"Source file not found: {src}")
+                    logger.error(f"Source file not found: {src_path}")
                     
-            # Validate updated files
-            if not self.validate_schema_files():
-                raise Exception("Schema validation failed after update")
-                
-            logger.info("Schema update completed successfully")
-            
         except Exception as e:
-            logger.error(f"Schema update failed: {str(e)}")
+            logger.error(f"Failed to update schema files: {str(e)}")
             raise
             
     def validate_schema_files(self) -> bool:
@@ -286,35 +253,32 @@ For each change:
             return False
 
 def main():
-    """Main function to run schema version updates."""
-    parser = argparse.ArgumentParser(description='Schema Version Manager')
-    parser.add_argument('--major', action='store_true', help='Increment major version')
-    parser.add_argument('--minor', action='store_true', help='Increment minor version')
-    parser.add_argument('--version', type=str, help='Specify exact version (overrides increment flags)')
-    parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description='Manage schema versioning')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--major', action='store_true', help='Increment major version')
+    group.add_argument('--minor', action='store_true', help='Increment minor version')
+    group.add_argument('--version', type=str, help='Set specific version')
+    
     args = parser.parse_args()
+    manager = SchemaVersionManager()
     
     try:
-        manager = SchemaVersionManager()
-        
         if args.version:
             new_version = args.version
         else:
-            new_version = manager.increment_version(args.major, args.minor)
+            new_version = manager.increment_version(
+                major=args.major,
+                minor=args.minor
+            )
             
-        if not args.yes:
-            response = input(f"This will update schema files to version {new_version}. Continue? (yes/no): ")
-            if response.lower() != 'yes':
-                logger.info("Update cancelled by user.")
-                return
-                
+        logger.info(f"Updating schema to version {new_version}")
         manager.update_schema_files(new_version)
+        logger.info("Schema update completed successfully")
         
     except Exception as e:
         logger.error(f"Schema update failed: {str(e)}")
-        return 1
-        
-    return 0
+        raise
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 

@@ -114,7 +114,38 @@ class DatabaseInitializer:
                             """
                             session.run(query)
                             self.logger.info(f"Created index on {node_type}.{prop}")
-                            
+                
+                # Create v2.2 schema specific constraints and indexes
+                # AIClassification node
+                session.run("""
+                CREATE CONSTRAINT aiclassification_id IF NOT EXISTS 
+                FOR (n:AIClassification) REQUIRE n.id IS UNIQUE
+                """)
+                session.run("""
+                CREATE INDEX aiclassification_match_type IF NOT EXISTS 
+                FOR (n:AIClassification) ON (n.match_type)
+                """)
+                session.run("""
+                CREATE INDEX aiclassification_confidence IF NOT EXISTS 
+                FOR (n:AIClassification) ON (n.confidence)
+                """)
+                session.run("""
+                CREATE INDEX aiclassification_review_status IF NOT EXISTS 
+                FOR (n:AIClassification) ON (n.review_status)
+                """)
+                
+                # NoMatchAnalysis node
+                session.run("""
+                CREATE CONSTRAINT nomatchanalysis_id IF NOT EXISTS 
+                FOR (n:NoMatchAnalysis) REQUIRE n.id IS UNIQUE
+                """)
+                session.run("""
+                CREATE INDEX nomatchanalysis_status IF NOT EXISTS 
+                FOR (n:NoMatchAnalysis) ON (n.status)
+                """)
+                
+                self.logger.info("Created v2.2 schema constraints and indexes")
+                
             return True
             
         except Exception as e:
@@ -796,20 +827,77 @@ class DatabaseInitializer:
             return True
 
     def _validate_schema_compliance(self) -> bool:
-        """Validate that all nodes have required properties according to schema."""
-        query = """
-            MATCH (u:UseCase)
-            WHERE u.id IS NULL
-                OR u.name IS NULL
-                OR u.created_at IS NULL
-                OR u.last_updated IS NULL
-            RETURN count(u) as invalid_nodes
-        """
-        result = self.driver.session().run(query).single()
-        if result and result["invalid_nodes"] > 0:
-            logger.warning(f"Found {result['invalid_nodes']} use cases with missing required properties")
+        """Validate that all nodes and relationships comply with schema requirements."""
+        try:
+            with self.driver.session() as session:
+                # Validate AIClassification nodes
+                result = session.run("""
+                MATCH (c:AIClassification)
+                WHERE NOT exists(c.id) 
+                   OR NOT exists(c.match_type)
+                   OR NOT exists(c.confidence)
+                   OR NOT exists(c.analysis_method)
+                   OR NOT exists(c.analysis_version)
+                   OR NOT exists(c.review_status)
+                   OR NOT exists(c.classified_at)
+                RETURN count(c) as invalid_count
+                """).single()
+                
+                if result['invalid_count'] > 0:
+                    self.logger.error(f"Found {result['invalid_count']} AIClassification nodes with missing required properties")
+                    return False
+                    
+                # Validate NoMatchAnalysis nodes
+                result = session.run("""
+                MATCH (n:NoMatchAnalysis)
+                WHERE NOT exists(n.id)
+                   OR NOT exists(n.reason)
+                   OR NOT exists(n.confidence)
+                   OR NOT exists(n.status)
+                   OR NOT exists(n.created_at)
+                RETURN count(n) as invalid_count
+                """).single()
+                
+                if result['invalid_count'] > 0:
+                    self.logger.error(f"Found {result['invalid_count']} NoMatchAnalysis nodes with missing required properties")
+                    return False
+                    
+                # Validate classification relationships
+                result = session.run("""
+                MATCH (u:UseCase)-[r:CLASSIFIED_AS]->(c:AIClassification)
+                MATCH (cat:AICategory)-[r2:CLASSIFIES]->(c)
+                WITH u, c, cat, 
+                     CASE WHEN NOT exists(r.created_at) THEN 1 ELSE 0 END as missing_rel_props,
+                     CASE WHEN NOT exists(r2) THEN 1 ELSE 0 END as missing_cat_rel
+                RETURN sum(missing_rel_props) as invalid_rels,
+                       sum(missing_cat_rel) as missing_category_rels
+                """).single()
+                
+                if result['invalid_rels'] > 0:
+                    self.logger.error(f"Found {result['invalid_rels']} classification relationships with missing properties")
+                    return False
+                    
+                if result['missing_category_rels'] > 0:
+                    self.logger.error(f"Found {result['missing_category_rels']} AIClassification nodes without category relationships")
+                    return False
+                    
+                # Validate no-match relationships
+                result = session.run("""
+                MATCH (u:UseCase)-[r:HAS_ANALYSIS]->(n:NoMatchAnalysis)
+                WHERE NOT exists(r.created_at)
+                RETURN count(r) as invalid_count
+                """).single()
+                
+                if result['invalid_count'] > 0:
+                    self.logger.error(f"Found {result['invalid_count']} no-match relationships with missing properties")
+                    return False
+                    
+                self.logger.info("Schema compliance validation passed")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Schema compliance validation failed: {str(e)}")
             return False
-        return True
 
     def _validate_data_quality(self) -> bool:
         """Validate data quality and consistency."""
