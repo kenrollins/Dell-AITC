@@ -1,7 +1,7 @@
-# Dell-AITC Schema Visualization
+# Dell-AITC Schema Visualization v2.2
 
 ## Overview
-This document provides a visual representation of the Dell-AITC schema, focusing on the relationships between AI technology categories and federal use cases.
+This document provides a visual representation of the Dell-AITC schema version 2.2, focusing on the relationships between AI technology categories and federal use cases.
 
 ## Version Information
 ```yaml
@@ -208,6 +208,42 @@ sequenceDiagram
     M->>CL: Create classification
     CL->>UC: Link to use case
     Note over CL,UC: Includes match type,<br/>confidence scores,<br/>and LLM analysis
+```
+
+## Data Flow
+
+```mermaid
+graph TD
+    subgraph Input
+        FD[Federal Data]
+        KW[Keywords]
+        CAT[Categories]
+    end
+
+    subgraph Processing
+        PM[Pattern Matching]
+        SA[Semantic Analysis]
+        CS[Confidence Scoring]
+        LLM[LLM Analysis]
+    end
+
+    subgraph Output
+        UC[Use Cases]
+        TC[Tech Categories]
+        CL[Classifications]
+        NM[No Matches]
+    end
+
+    FD --> PM
+    KW --> PM
+    CAT --> PM
+    PM --> SA
+    SA --> CS
+    CS --> LLM
+    LLM --> CL
+    LLM --> NM
+    UC --> CL
+    TC --> CL
 ```
 
 ## Legend

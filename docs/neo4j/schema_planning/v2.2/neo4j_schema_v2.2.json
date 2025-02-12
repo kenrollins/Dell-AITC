@@ -3,74 +3,249 @@
   "last_updated": "2024-02",
   "nodes": {
     "AICategory": {
+      "description": "Core AI technology categories",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true, "unique": true},
-        "category_definition": {"type": "text", "required": true},
-        "status": {"type": "enum", "values": ["Active", "Deprecated", "Proposed"]},
-        "maturity_level": {"type": "enum", "values": ["Emerging", "Established", "Mature"]},
-        "zone_id": {"type": "uuid", "references": "Zone.id"},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"},
-        "version": {"type": "string"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true,
+          "description": "Unique identifier"
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "indexed": true,
+          "description": "Category name"
+        },
+        "category_definition": {
+          "type": "text",
+          "required": true,
+          "description": "Detailed category description"
+        },
+        "status": {
+          "type": "enum",
+          "values": ["Active", "Deprecated", "Proposed"],
+          "indexed": true
+        },
+        "maturity_level": {
+          "type": "enum",
+          "values": ["Emerging", "Established", "Mature"],
+          "indexed": true
+        },
+        "zone_id": {
+          "type": "uuid",
+          "references": "Zone.id",
+          "description": "Reference to technical zone"
+        },
+        "created_at": {
+          "type": "datetime",
+          "description": "Creation timestamp"
+        },
+        "last_updated": {
+          "type": "datetime",
+          "description": "Last modification timestamp"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semantic version number"
+        }
       }
     },
     "Zone": {
+      "description": "Technical zones",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true, "unique": true},
-        "description": {"type": "string"},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true,
+          "description": "Unique identifier"
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "indexed": true,
+          "description": "Zone name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Zone description"
+        },
+        "created_at": {
+          "type": "datetime",
+          "description": "Creation timestamp"
+        },
+        "last_updated": {
+          "type": "datetime",
+          "description": "Last modification timestamp"
+        }
       }
     },
     "Keyword": {
+      "description": "Keywords for AI technology categorization",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true, "unique": true},
-        "type": {"type": "string"},
-        "relevance_score": {"type": "float"},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true,
+          "description": "Unique identifier"
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "indexed": true,
+          "description": "Keyword name"
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of keyword"
+        },
+        "relevance_score": {
+          "type": "float",
+          "description": "Base relevance score"
+        },
+        "created_at": {
+          "type": "datetime",
+          "description": "Creation timestamp"
+        },
+        "last_updated": {
+          "type": "datetime",
+          "description": "Last modification timestamp"
+        }
       }
     },
     "UseCase": {
+      "description": "Federal AI use cases",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true},
-        "topic_area": {"type": "enum"},
-        "stage": {"type": "enum"},
-        "impact_type": {"type": "enum"},
-        "purpose_benefits": {"type": "text"},
-        "outputs": {"type": "text"},
-        "dev_method": {"type": "enum"},
-        "contains_pii": {"type": "boolean"},
-        "has_ato": {"type": "boolean"},
-        "system_name": {"type": "string"},
-        "date_initiated": {"type": "datetime"},
-        "date_acquisition": {"type": "datetime"},
-        "date_implemented": {"type": "datetime"},
-        "date_retired": {"type": "datetime"},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "indexed": true,
+          "description": "Use case name"
+        },
+        "topic_area": {
+          "type": "enum",
+          "indexed": true
+        },
+        "stage": {
+          "type": "enum",
+          "indexed": true
+        },
+        "impact_type": {
+          "type": "enum",
+          "indexed": true
+        },
+        "purpose_benefits": {
+          "type": "text",
+          "description": "Intended purpose and benefits"
+        },
+        "outputs": {
+          "type": "text",
+          "description": "System outputs description"
+        },
+        "dev_method": {
+          "type": "enum",
+          "description": "Development method"
+        },
+        "contains_pii": {
+          "type": "boolean",
+          "indexed": true,
+          "nullable": true
+        },
+        "has_ato": {
+          "type": "boolean",
+          "indexed": true,
+          "nullable": true
+        },
+        "system_name": {
+          "type": "string",
+          "nullable": true
+        },
+        "date_initiated": {
+          "type": "datetime",
+          "nullable": true
+        },
+        "date_acquisition": {
+          "type": "datetime",
+          "nullable": true
+        },
+        "date_implemented": {
+          "type": "datetime",
+          "nullable": true
+        },
+        "date_retired": {
+          "type": "datetime",
+          "nullable": true
+        },
+        "created_at": {
+          "type": "datetime"
+        },
+        "last_updated": {
+          "type": "datetime"
+        }
       }
     },
     "Agency": {
+      "description": "Federal agencies",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true, "unique": true},
-        "abbreviation": {"type": "string", "required": true, "unique": true},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "indexed": true
+        },
+        "abbreviation": {
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "indexed": true
+        },
+        "created_at": {
+          "type": "datetime"
+        },
+        "last_updated": {
+          "type": "datetime"
+        }
       }
     },
     "Bureau": {
+      "description": "Agency bureaus/offices",
       "properties": {
-        "id": {"type": "uuid", "required": true},
-        "name": {"type": "string", "required": true},
-        "agency_id": {"type": "uuid", "required": true, "references": "Agency.id"},
-        "created_at": {"type": "datetime"},
-        "last_updated": {"type": "datetime"}
+        "id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "indexed": true
+        },
+        "agency_id": {
+          "type": "uuid",
+          "required": true,
+          "references": "Agency.id",
+          "indexed": true
+        },
+        "created_at": {
+          "type": "datetime"
+        },
+        "last_updated": {
+          "type": "datetime"
+        }
       }
     },
     "AIClassification": {

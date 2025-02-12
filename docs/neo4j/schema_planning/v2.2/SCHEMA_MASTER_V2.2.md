@@ -1,7 +1,7 @@
-# Dell-AITC Schema Documentation
+# Dell-AITC Schema Documentation v2.2
 
 ## Overview
-This document describes the Neo4j database schema for the Dell-AITC system, focusing on AI technology classification and federal use case tracking.
+This document describes the Neo4j database schema for the Dell-AITC system version 2.2, focusing on AI technology classification and federal use case tracking.
 
 ## Version Information
 ```yaml

@@ -275,6 +275,36 @@ Implementation:
   - Enhanced data loading process
 ```
 
+## Version 2.1.2
+Status: Completed
+Date: February 2024
+
+### Changes
+1. Data Loading Optimization
+   - Improved error handling in load_inventory function
+   - Added better logging for data loading process
+   Reason: Need better visibility into data loading issues
+   Implementation:
+     - Enhanced error messages
+     - Added detailed logging
+     - Verified with larger dataset
+
+2. Keyword Node Documentation Fix
+   - Added missing Keyword node definition to schema JSON
+   - Added Keyword constraints and indexes to setup Cypher
+   - Ensured consistent documentation across all schema files
+   Reason: Keyword node structure existed in visualization but was missing from core schema docs
+   Impact: Documentation Only
+   Implementation:
+     - Updated neo4j_schema.json
+     - Updated setup_schema_v2.1.cypher
+     - Added keyword constraints and indexes
+     - Verified consistency across all schema documents
+   Validation:
+     - Confirmed all keyword properties are properly documented
+     - Verified index and constraint definitions
+     - Checked relationship documentation
+
 ## Version 2.1.2 (Next)
 Status: Planning
 Changes Planned:

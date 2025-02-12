@@ -6,7 +6,13 @@ Every time you choose to apply a rule(s), explicitly state the rule(s) in the ou
 This is a local AI-driven technology categorization system that evaluates and classifies federal AI use cases against a set of 14 AI technology categories. The backend uses FastAPI for processing, Neo4j for knowledge graph storage, and AI models (Ollama locally, OpenAI API fallback) for keyword matching, semantic evaluation, and LLM-based classification.
 
 ## Context
-- "Neo4j Schema Details": "When generating Cypher queries, always follow the node properties and relationships from docs/neo4j_schema/neo4j_schema_documentation.md and docs/neo4j_schema/neo4j_schema.json
+- "Neo4j Schema Details": "When generating Cypher queries and working with the database schema, follow these files:
+  - Primary Schema Documentation: docs/neo4j/neo4j_schema_documentation.md
+  - Schema JSON Definition: docs/neo4j/neo4j_schema.json
+  - Schema Planning: docs/neo4j/schema_planning/
+  - Schema Visualization: docs/neo4j/schema_planning/v2.2/SCHEMA_VISUALIZATION_V2.2.md (current version)
+  - Schema Changes: docs/neo4j/schema_planning/v2.2/SCHEMA_CHANGES.md (current version)
+  - Schema Master: docs/neo4j/schema_planning/v2.2/SCHEMA_MASTER_V2.2.md (current version)"
 
 ## Project Structure
 ```
@@ -16,49 +22,49 @@ Dell-AITC/
 │   │   ├── api/          # API endpoints
 │   │   ├── models/       # Pydantic models
 │   │   ├── services/     # Business logic (Neo4j, AI processing)
+│   │   │   └── database/ # Database management
+│   │   │       └── management/  # Database initialization and loading
+│   │   ├── utils/        # Utility functions
 │   │   ├── config.py     # Configuration settings
 │   │   ├── main.py       # Entry point for FastAPI
 │   │   ├── dependencies.py  # Common dependencies (DB, AI models)
-│   │   ├── api_docs/     # API documentation
-│   │   └── ...           # Rest of the backend structure
+│   │   └── __init__.py   # Package initialization
 │   ├── requirements.txt  # Python dependencies
 │   ├── Dockerfile        # Docker configuration for backend
-│   ├── .env              # Environment variables
+│   └── .env             # Environment variables
 │
-│── frontend/             # Next.js frontend
-│   ├── src/              # Frontend source code
-│   │   ├── components/   # Reusable UI components
-│   │   ├── pages/        # Next.js pages (index.tsx, etc.)
-│   │   ├── styles/       # Tailwind CSS styles
-│   │   ├── utils/        # Helper functions
-│   │   └── ...           # Rest of the frontend structure
-│   ├── public/           # Static assets
-│   ├── package.json      # Node.js dependencies
-│   ├── next.config.js    # Next.js config
-│   ├── tailwind.config.js  # Tailwind CSS config
+│── frontend/            # Next.js frontend
+│   ├── src/             # Frontend source code
+│   │   ├── components/  # Reusable UI components
+│   │   ├── pages/       # Next.js pages (index.tsx, etc.)
+│   │   ├── styles/      # Tailwind CSS styles
+│   │   └── utils/       # Helper functions
+│   ├── public/          # Static assets
+│   ├── package.json     # Node.js dependencies
+│   ├── next.config.js   # Next.js config
+│   └── tailwind.config.js # Tailwind CSS config
 │
-│── data/                 # Data storage (CSV, Excel)
-│   ├── input/            # Raw input files
-│   ├── output/           # Processed results
-│── data_backup/          # Backup of critical data
-│── deprecated/           # Archived code and documentation
-│── docs/                 # Documentation
-│   ├── neo4j/            # Neo4j schema design and versioning
+│── data/               # Data storage (CSV, Excel)
+│   ├── input/          # Raw input files
+│   └── output/         # Processed results
+│── data_backup/        # Backup of critical data
+│── deprecated/         # Archived code and documentation
+│   └── scripts/        # Deprecated scripts
+│── docs/              # Documentation
+│   ├── neo4j/         # Neo4j schema design and versioning
 │   │   ├── schema_planning/  # Schema version planning
-│   │   ├── current/     # Current schema version
-│   │   └── ...           # Rest of the docs structure
-│   ├── fed_use_case/    # Federal use case documentation
-│   ├── project_tracking/ # Project management docs
-│   └── ...               # Rest of the docs structure
-│── notebooks/            # Jupyter notebooks
-│── scripts/              # Utility and experimental scripts
-│── .github/             # GitHub specific configurations
-│── QUICKSTART.md        # Quick start guide
-│── CHEATSHEET.md        # Common commands and patterns
-│── docker-compose.yml   
-│── .env.example         # Template for environment variables
-│── .gitignore           # Ignore unnecessary files
-│── README.md            # Project documentation
+│   │   └── current/    # Current schema version
+│   ├── fed_use_case/  # Federal use case documentation
+│   └── project_tracking/ # Project management docs
+│── scripts/           # Utility and experimental scripts
+│── .github/          # GitHub specific configurations
+│── QUICKSTART.md     # Quick start guide
+│── CHEATSHEET.md     # Common commands and patterns
+│── docker-compose.yml # Docker compose configuration
+│── .env.example      # Template for environment variables
+│── .gitignore        # Git ignore configuration
+│── README.md         # Project documentation
+└── .cursorrules      # Project rules and conventions
 ```
 
 ## Tech Stack
@@ -212,4 +218,6 @@ rule: schema_changes: All schema modifications must follow the schema change pro
 5. Create or update migration scripts
 6. Test changes in isolation
 7. Update all affected code
+
+rule: commands: All terminal commands must use PowerShell syntax and conventions since we're on Windows. Use PowerShell cmdlets (e.g., Move-Item instead of mv, New-Item instead of mkdir) and Windows-style paths.
 

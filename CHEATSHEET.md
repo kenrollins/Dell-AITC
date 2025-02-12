@@ -9,6 +9,23 @@ python scripts/manage.py reset-db
 
 # Update schema version
 python scripts/database/maintenance/schema_version_manager.py
+
+# Complete database rebuild from scratch
+python -m backend.app.services.database.management.recover_from_nuke
+# This will:
+# 1. Initialize database schema (constraints and indexes)
+# 2. Load technology zones
+# 3. Load AI categories and keywords
+# 4. Load federal AI inventory (agencies, bureaus, use cases)
+# Logs will be written to: logs/database/database_recovery_YYYYMMDD_HHMMSS.log
+
+# Verify database state and integrity
+python -m backend.app.services.database.management.verify_database
+# This will check:
+# 1. Node counts (Zones, Categories, Keywords, Use Cases, etc.)
+# 2. Relationship counts (BELONGS_TO, HAS_KEYWORD, etc.)
+# 3. Data integrity (required properties, relationships, orphaned nodes)
+# Logs will be written to: logs/database/database_verify_YYYYMMDD_HHMMSS.log
 ```
 
 ### Code Quality

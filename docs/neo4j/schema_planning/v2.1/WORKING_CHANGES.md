@@ -1,30 +1,19 @@
 # Schema Working Changes v2.1.x
 
 ## Overview
-This document tracks schema changes discovered during development and testing. Changes will be consolidated into the master schema documentation when finalized, with appropriate version increments.
+This document tracks schema changes discovered during development and testing. 
+Changes will be consolidated into the master schema documentation when finalized.
 
-## Current Version: v2.1.1
+## Current Version: v2.1.2
 Previous changes have been consolidated into SCHEMA_CHANGES.md.
 
-## Working Changes (v2.1.2)
+## Working Changes
 ```yaml
-Status: Planning
-Changes:
-  1. Data Loading Optimization
-     - Improve error handling in load_inventory function
-     - Add better logging for data loading process
-     Reason: Need better visibility into data loading issues
-     Status: In Progress
-     Implementation:
-       - Enhanced error messages
-       - Added detailed logging
-       - Need to verify with larger dataset
-
-  # Template for new changes:
-  #2. [Node/Relationship] [Addition/Modification/Removal]
-  #   - Specific changes
-  #   Reason: Why this change is needed
-  #   Status: [Proposed/Implemented/Tested/Documented]
+# Template for new changes:
+1. [Node/Relationship] [Addition/Modification/Removal]
+   - Specific changes
+   Reason: Why this change is needed
+   Status: [Proposed/Implemented/Tested/Documented]
 ```
 
 ## Process

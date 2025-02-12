@@ -1,0 +1,114 @@
+{
+  "version": "2.2.0",
+  "description": "Enhanced technology classification with match types and LLM analysis",
+  "nodes": {
+    "UseCase": {
+      "labels": ["UseCase"],
+      "properties": {
+        "id": {"type": "string", "required": true, "unique": true},
+        "name": {"type": "string", "required": true},
+        "description": {"type": "string"},
+        "purpose_benefits": {"type": "string"},
+        "outputs": {"type": "string"},
+        "created_at": {"type": "datetime", "default": "timestamp()"},
+        "updated_at": {"type": "datetime", "default": "timestamp()"}
+      },
+      "indexes": [
+        {"type": "btree", "properties": ["id"]},
+        {"type": "fulltext", "properties": ["name", "description", "purpose_benefits"]}
+      ]
+    },
+    "AICategory": {
+      "labels": ["AICategory"],
+      "properties": {
+        "name": {"type": "string", "required": true, "unique": true},
+        "definition": {"type": "string", "required": true},
+        "zone": {"type": "string"},
+        "keywords": {"type": "string[]"},
+        "capabilities": {"type": "string[]"},
+        "business_language": {"type": "string[]"},
+        "maturity_level": {"type": "string"}
+      },
+      "indexes": [
+        {"type": "btree", "properties": ["name"]},
+        {"type": "fulltext", "properties": ["definition"]}
+      ]
+    }
+  },
+  "relationships": {
+    "USES_TECHNOLOGY": {
+      "start": "UseCase",
+      "end": "AICategory",
+      "properties": {
+        "match_type": {
+          "type": "string",
+          "enum": ["PRIMARY", "SUPPORTING", "RELATED"],
+          "required": true
+        },
+        "match_rank": {
+          "type": "integer",
+          "description": "Order of matches, 1 being highest"
+        },
+        "confidence": {
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "required": true
+        },
+        "analysis_method": {
+          "type": "string",
+          "enum": ["KEYWORD", "SEMANTIC", "LLM", "ENSEMBLE"],
+          "required": true
+        },
+        "analysis_version": {
+          "type": "string",
+          "description": "Version of analysis algorithm"
+        },
+        "keyword_score": {"type": "float"},
+        "semantic_score": {"type": "float"},
+        "llm_score": {"type": "float"},
+        "field_match_scores": {
+          "type": "json",
+          "description": "Detailed field-level match scores"
+        },
+        "term_match_details": {
+          "type": "json",
+          "description": "Details of term/keyword matches"
+        },
+        "matched_keywords": {"type": "string[]"},
+        "llm_verification": {"type": "boolean"},
+        "llm_confidence": {"type": "float"},
+        "llm_reasoning": {"type": "string"},
+        "llm_suggestions": {"type": "json"},
+        "improvement_notes": {"type": "string[]"},
+        "false_positive": {"type": "boolean"},
+        "manual_override": {"type": "boolean"},
+        "review_status": {
+          "type": "string",
+          "enum": ["PENDING", "REVIEWED", "VERIFIED"],
+          "default": "PENDING"
+        },
+        "last_updated": {"type": "datetime", "default": "timestamp()"}
+      },
+      "constraints": [
+        {
+          "type": "unique",
+          "properties": ["match_type"],
+          "condition": "match_type = 'PRIMARY'"
+        }
+      ]
+    },
+    "NO_MATCH": {
+      "start": "UseCase",
+      "end": "AICategory",
+      "properties": {
+        "reason": {"type": "string", "required": true},
+        "confidence": {"type": "float"},
+        "llm_analysis": {"type": "json"},
+        "suggested_keywords": {"type": "string[]"},
+        "improvement_suggestions": {"type": "json"},
+        "created_at": {"type": "datetime", "default": "timestamp()"}
+      }
+    }
+  }
+} 
