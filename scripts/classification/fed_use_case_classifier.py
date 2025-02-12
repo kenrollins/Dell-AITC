@@ -562,11 +562,11 @@ class Neo4jClassifier:
         self.llm_processor = LLMProcessor()
         logging.info("✓ Initialized LLM processor")
     
-    def _calculate_keyword_score(self, use_case_text: str, category: dict) -> float:
+    def _calculate_keyword_score(self, use_case_text: str, category: AICategory) -> float:
         """Calculate keyword-based score."""
         try:
             # Get category keywords
-            keywords = category.get('keywords', [])
+            keywords = category.keywords
             if not keywords:
                 return 0.0
             
@@ -574,7 +574,7 @@ class Neo4jClassifier:
             use_case_text = use_case_text.lower()
             
             # Extract keyword names and convert to lowercase
-            keyword_names = [k['name'].lower() for k in keywords if isinstance(k, dict) and 'name' in k]
+            keyword_names = [k.lower() for k in keywords if k]
             if not keyword_names:
                 return 0.0
             

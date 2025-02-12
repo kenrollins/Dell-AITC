@@ -73,6 +73,43 @@ class DatabaseVerifier:
                 })
         return results
         
+    def check_use_case_details(self) -> Dict[str, Any]:
+        """Get detailed statistics about use cases."""
+        queries = [
+            ("total", "MATCH (u:UseCase) RETURN count(u) as count"),
+            ("classified", """
+                MATCH (u:UseCase)-[:CLASSIFIED_AS]->(:AIClassification)
+                RETURN count(DISTINCT u) as count
+            """),
+            ("unclassified", """
+                MATCH (u:UseCase)
+                WHERE NOT (u)-[:CLASSIFIED_AS]->(:AIClassification)
+                RETURN count(u) as count
+            """),
+            ("by_topic", """
+                MATCH (u:UseCase)
+                RETURN u.topic_area as topic, count(u) as count
+                ORDER BY count(u) DESC
+            """),
+            ("by_stage", """
+                MATCH (u:UseCase)
+                RETURN u.stage as stage, count(u) as count
+                ORDER BY count(u) DESC
+            """)
+        ]
+        
+        results = {}
+        with self.driver.session() as session:
+            for name, query in queries:
+                if name in ['total', 'classified', 'unclassified']:
+                    results[name] = session.run(query).single()['count']
+                else:
+                    results[name] = [
+                        {'name': record[0], 'count': record[1]}
+                        for record in session.run(query)
+                    ]
+        return results
+        
     def check_relationships(self) -> List[Dict[str, Any]]:
         """Verify the relationships between nodes."""
         queries = [
@@ -80,7 +117,8 @@ class DatabaseVerifier:
             ("HAS_KEYWORD", "MATCH ()-[r:HAS_KEYWORD]->() RETURN count(r) as count"),
             ("IMPLEMENTED_BY", "MATCH ()-[r:IMPLEMENTED_BY]->() RETURN count(r) as count"),
             ("MANAGED_BY", "MATCH ()-[r:MANAGED_BY]->() RETURN count(r) as count"),
-            ("HAS_BUREAU", "MATCH ()-[r:HAS_BUREAU]->() RETURN count(r) as count")
+            ("HAS_BUREAU", "MATCH ()-[r:HAS_BUREAU]->() RETURN count(r) as count"),
+            ("CLASSIFIED_AS", "MATCH ()-[r:CLASSIFIED_AS]->() RETURN count(r) as count")
         ]
         
         results = []
@@ -157,6 +195,21 @@ def main():
         logger.info("\n=== Node Counts ===")
         for result in verifier.check_node_counts():
             logger.info(f"{result['label']}: {result['count']} [{result['status']}]")
+            
+        # Check use case details
+        logger.info("\n=== Use Case Details ===")
+        use_case_details = verifier.check_use_case_details()
+        logger.info(f"Total Use Cases: {use_case_details['total']}")
+        logger.info(f"Classified Use Cases: {use_case_details['classified']}")
+        logger.info(f"Unclassified Use Cases: {use_case_details['unclassified']}")
+        
+        logger.info("\nUse Cases by Topic:")
+        for topic in use_case_details['by_topic']:
+            logger.info(f"  {topic['name']}: {topic['count']}")
+            
+        logger.info("\nUse Cases by Stage:")
+        for stage in use_case_details['by_stage']:
+            logger.info(f"  {stage['name']}: {stage['count']}")
             
         # Check relationships
         logger.info("\n=== Relationships ===")

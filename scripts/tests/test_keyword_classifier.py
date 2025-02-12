@@ -22,6 +22,14 @@ import tqdm  # For progress bars
 from datetime import datetime
 from collections import Counter
 import re
+import asyncio
+
+# Add project root and backend to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'backend'))
+
+from app.services.classifier import Classifier
 
 # Disable sentence transformer progress bars
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -55,6 +63,9 @@ logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
 logging.getLogger('transformers').setLevel(logging.WARNING)
 logging.getLogger('root').setLevel(logging.WARNING)
 
+# File paths
+CATEGORIES_FILE = Path('data/input/AI-Technology-Categories-v1.4.csv')
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Test keyword-based AI technology classification')
@@ -79,7 +90,7 @@ def verify_paths():
     paths_to_check = {
         'Backend Directory': base_path / 'backend',
         'Input Data Directory': base_path / 'data' / 'input',
-        'AI Categories CSV': base_path / 'data' / 'input' / 'AI-Technology-Categories-v1.5.csv',
+        'AI Categories CSV': base_path / 'data' / 'input' / 'AI-Technology-Categories-v1.4.csv',
         'Use Cases CSV': base_path / 'data' / 'input' / '2024_consolidated_ai_inventory_raw_v2.csv'
     }
     
@@ -227,15 +238,18 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     for result in results:
         # Count matches vs non-matches
-        if result['category_name']:
+        best_match = result.get_best_match() if hasattr(result, 'get_best_match') else None
+        
+        if best_match:
             analysis['matched_cases'] += 1
             
             # Track categories
-            cat = result['category_name']
-            analysis['matched_categories'][cat] = analysis['matched_categories'].get(cat, 0) + 1
+            cat = best_match.get('category_name')
+            if cat:
+                analysis['matched_categories'][cat] = analysis['matched_categories'].get(cat, 0) + 1
             
             # Track confidence levels
-            conf = result['keyword_score']
+            conf = best_match.get('confidence', 0.0)
             if conf > 0.8:
                 analysis['confidence_distribution']['high'] += 1
             elif conf > 0.5:
@@ -244,11 +258,12 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 analysis['confidence_distribution']['low'] += 1
                 
             # Track keyword stats
-            keywords = result['matched_keywords']
-            analysis['keyword_stats']['total_matches'] += len(keywords)
-            for kw in keywords:
-                analysis['keyword_stats']['most_common_keywords'][kw] = \
-                    analysis['keyword_stats']['most_common_keywords'].get(kw, 0) + 1
+            matched_terms = result.matched_terms if hasattr(result, 'matched_terms') else {}
+            for category_terms in matched_terms.values():
+                analysis['keyword_stats']['total_matches'] += len(category_terms)
+                for term in category_terms:
+                    analysis['keyword_stats']['most_common_keywords'][term] = \
+                        analysis['keyword_stats']['most_common_keywords'].get(term, 0) + 1
         else:
             analysis['unmatched_cases'] += 1
     
@@ -256,15 +271,6 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     if analysis['matched_cases'] > 0:
         analysis['keyword_stats']['avg_matches_per_case'] = \
             analysis['keyword_stats']['total_matches'] / analysis['matched_cases']
-    
-    # Sort and limit most common keywords
-    analysis['keyword_stats']['most_common_keywords'] = dict(
-        sorted(
-            analysis['keyword_stats']['most_common_keywords'].items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
-    )
     
     return analysis
 
@@ -331,134 +337,94 @@ def analyze_unmatched_cases(results: List[Dict[str, Any]], test_cases: List[Dict
     
     return keyword_suggestions
 
-def save_keyword_suggestions(suggestions: Dict[str, Any], timestamp: str):
-    """Save keyword suggestions to a file for review"""
-    output_file = f"data/output/keyword_suggestions_{timestamp}.txt"
+def save_keyword_suggestions(analysis: Dict[str, Any], timestamp: str) -> Path:
+    """Save keyword suggestions to file"""
+    output_dir = Path('data/output/keyword_suggestions')
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("=== Keyword Suggestions from Unmatched Cases ===\n\n")
-        
-        f.write("Technical Terms:\n")
-        for term, count in suggestions['technical_terms'].items():
-            f.write(f"  {term}: {count}\n")
-        
-        f.write("\nPhrases:\n")
-        for phrase, count in suggestions['phrases'].items():
-            f.write(f"  {phrase}: {count}\n")
+    output_file = output_dir / f'keyword_suggestions_{timestamp}.json'
     
-    print(f"\nKeyword suggestions saved to: {output_file}")
+    # Format suggestions
+    suggestions = {
+        'keyword_stats': analysis['keyword_stats'],
+        'matched_categories': analysis['matched_categories'],
+        'confidence_distribution': analysis['confidence_distribution'],
+        'total_cases': analysis['total_cases'],
+        'matched_cases': analysis['matched_cases'],
+        'unmatched_cases': analysis['unmatched_cases']
+    }
+    
+    with open(output_file, 'w') as f:
+        json.dump(suggestions, f, indent=2)
+    
     return output_file
 
-def main():
-    """Main test execution"""
-    try:
-        # Parse command line arguments
-        args = parse_args()
-        
-        print("Starting classifier testing...")
-        
-        # Add backend to Python path
-        backend_path = str(Path(__file__).parent.parent.parent / 'backend')
-        sys.path.append(backend_path)
-        print(f"Added backend path: {backend_path}")
-        print(f"Python path: {sys.path}")
-        
+async def process_test_cases(test_cases: List[Dict[str, Any]], classifier: Classifier) -> List[Dict[str, Any]]:
+    """Process test cases asynchronously"""
+    results = []
+    for i, case in enumerate(test_cases, 1):
         try:
-            print("Importing required modules...")
-            from app.services.classifier import Classifier
-            from app.models.analysis import AnalysisMethod
-            print("Successfully imported modules")
-        except ImportError as e:
-            print(f"Error importing modules: {str(e)}")
-            print(f"Current working directory: {os.getcwd()}")
-            raise
-        
-        # Verify paths
-        print("Verifying paths...")
+            logger.info(f"\nProcessing case {i}:")
+            logger.info(f"Name: {case.get('name', 'N/A')}")
+            logger.info(f"Description: {case.get('description', 'N/A')[:100]}...")
+            logger.info(f"Purpose/Benefits: {case.get('purpose_benefits', 'N/A')[:100]}...")
+            logger.info(f"Outputs: {case.get('outputs', 'N/A')[:100]}...")
+            
+            result = await classifier.classify_use_case(case)
+            results.append(result)
+            
+        except Exception as e:
+            logger.error(f"Error processing case {i}: {str(e)}")
+            logger.error(f"Case data: {case}")
+            results.append({
+                'error': str(e),
+                'case': case
+            })
+    return results
+
+async def async_main():
+    """Async main function"""
+    try:
+        args = parse_args()
         verify_paths()
         
         # Initialize classifier
-        print("Initializing classifier...")
-        classifier = Classifier()
+        logger.info("Initializing classifier...")
+        classifier = Classifier(dry_run=True)
+        await classifier.initialize()
         
-        # Load test cases with specified limit
-        print(f"Loading {args.num_cases} test cases...")
+        # Load test cases
+        logger.info(f"Loading {args.num_cases} test cases...")
         test_cases = load_test_cases(args.num_cases)
-        print(f"\nProcessing {len(test_cases)} test cases...")
         
-        # Add debug output for test cases
-        print("\nFirst test case details:")
-        first_case = test_cases[0]
-        print(f"Name: {first_case['name']}")
-        print(f"Description: {first_case['description'][:200]}...")
-        print(f"Purpose/Benefits: {first_case['purpose_benefits'][:200]}...")
-        print(f"Outputs: {first_case['outputs'][:200]}...")
-        
-        # Run classification
-        results = []
-        for i, case in enumerate(test_cases, 1):
-            try:
-                # Show progress every 10 cases
-                if i % 10 == 0:
-                    print(f"Progress: {i}/{len(test_cases)} cases processed")
-                
-                result = classifier.classify_use_case(case, method=AnalysisMethod(args.method))
-                results.append(result)
-                
-                # Log matches to debug file
-                if result['category_name']:
-                    print(f"\nCase {i} ({case['name']}):")
-                    print(f"  Matched: {result['category_name']} (conf: {result['confidence']:.2f})")
-                    print(f"  Method: {result['match_method']}")
-                    print(f"  Keywords: {', '.join(result['matched_keywords'])}")
-                else:
-                    print(f"\nCase {i} ({case['name']}):")
-                    print(f"  No match found")
-                    print(f"  Keyword score: {result['keyword_score']:.3f}")
-                    print(f"  Semantic score: {result['semantic_score']:.3f}")
-                    print(f"  Best keywords: {', '.join(result['matched_keywords'])}")
-            except Exception as e:
-                print(f"Error processing case {i}: {str(e)}")
-                print(f"Case data: {case}")
-                raise
+        logger.info(f"\nProcessing {len(test_cases)} test cases...")
+        results = await process_test_cases(test_cases, classifier)
         
         # Analyze results
-        print("\nAnalyzing results...")
         analysis = analyze_results(results)
         
-        # Analyze unmatched cases for keyword suggestions
-        if analysis['unmatched_cases'] > 0:
-            print("\nAnalyzing unmatched cases for keyword suggestions...")
-            suggestions = analyze_unmatched_cases(results, test_cases)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            suggestions_file = save_keyword_suggestions(suggestions, timestamp)
-        
-        # Output analysis
-        print("\n=== Analysis Results ===")
+        # Print summary
+        print("\nClassification Results:")
         print(f"Total Cases: {analysis['total_cases']}")
-        print(f"Matched Cases: {analysis['matched_cases']} ({(analysis['matched_cases']/analysis['total_cases']*100):.1f}%)")
+        print(f"Matched Cases: {analysis['matched_cases']}")
         print(f"Unmatched Cases: {analysis['unmatched_cases']}")
         
-        if analysis['matched_cases'] > 0:
-            print("\nConfidence Distribution:")
-            for level, count in analysis['confidence_distribution'].items():
-                if count > 0:
-                    print(f"  {level.title()}: {count} ({(count/analysis['matched_cases']*100):.1f}%)")
-            
-            print("\nCategory Distribution:")
-            for cat, count in sorted(analysis['matched_categories'].items(), key=lambda x: x[1], reverse=True):
-                print(f"  {cat}: {count} ({(count/analysis['matched_cases']*100):.1f}%)")
-            
-            if analysis['keyword_stats']['most_common_keywords']:
-                print("\nTop Keywords:")
-                for kw, count in list(analysis['keyword_stats']['most_common_keywords'].items())[:10]:
-                    print(f"  {kw}: {count}")
-            
+        # Save results if needed
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_keyword_suggestions(analysis, timestamp)
+        
+        # Cleanup
+        await classifier.close()
+        
     except Exception as e:
-        print(f"Error during execution: {str(e)}")
-        print("Traceback:")
-        traceback.print_exc()
-        sys.exit(1)
+        logger.error(f"Error during execution: {str(e)}")
+        logger.error("Traceback:")
+        logger.error(traceback.format_exc())
+        raise
+
+def main():
+    """Main entry point"""
+    asyncio.run(async_main())
 
 if __name__ == "__main__":
     main() 
