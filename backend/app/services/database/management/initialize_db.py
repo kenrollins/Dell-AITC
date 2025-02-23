@@ -84,7 +84,6 @@ CREATE INDEX agency_name IF NOT EXISTS FOR (a:Agency) ON (a.name);
 CREATE INDEX bureau_name IF NOT EXISTS FOR (b:Bureau) ON (b.name);
 CREATE INDEX classification_status IF NOT EXISTS FOR (c:AIClassification) ON (c.status);
 CREATE INDEX classification_type IF NOT EXISTS FOR (c:AIClassification) ON (c.type);
-CREATE INDEX agency_abbreviation IF NOT EXISTS FOR (a:Agency) ON (a.abbreviation);
 CREATE INDEX nomatch_status IF NOT EXISTS FOR (n:NoMatchAnalysis) ON (n.status);
 
 // Full-text indexes
@@ -124,7 +123,6 @@ index_queries = [
     "CREATE INDEX bureau_name IF NOT EXISTS FOR (b:Bureau) ON (b.name)",
     "CREATE INDEX classification_status IF NOT EXISTS FOR (c:AIClassification) ON (c.status)",
     "CREATE INDEX classification_type IF NOT EXISTS FOR (c:AIClassification) ON (c.type)",
-    "CREATE INDEX agency_abbreviation IF NOT EXISTS FOR (a:Agency) ON (a.abbreviation)",
     "CREATE INDEX nomatch_status IF NOT EXISTS FOR (n:NoMatchAnalysis) ON (n.status)",
     "CREATE INDEX classification_review_status IF NOT EXISTS FOR (c:AIClassification) ON (c.review_status)",
     "CREATE INDEX classification_analysis_method IF NOT EXISTS FOR (c:AIClassification) ON (c.analysis_method)",
@@ -166,7 +164,6 @@ VALIDATION_QUERIES = [
             any(x IN collect(name) WHERE x CONTAINS 'bureau_name') AND
             any(x IN collect(name) WHERE x CONTAINS 'classification_status') AND
             any(x IN collect(name) WHERE x CONTAINS 'classification_type') AND
-            any(x IN collect(name) WHERE x CONTAINS 'agency_abbreviation') AND
             any(x IN collect(name) WHERE x CONTAINS 'nomatch_status') AND
             any(x IN collect(name) WHERE x CONTAINS 'usecase_text') AND
             any(x IN collect(name) WHERE x CONTAINS 'category_definition') AS all_indexes_exist

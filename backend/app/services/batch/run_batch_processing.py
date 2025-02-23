@@ -12,9 +12,12 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import json
-from .batch_processor import BatchProcessor
+from .batch_processor import BatchProcessor, ProcessingPhase
 from ...config import get_settings
 from ..database.management.verify_database import DatabaseVerifier
+from backend.app.utils.logging import setup_logging
+import sys
+import time
 
 # Configure logging
 log_dir = Path("logs/batch_processing")
@@ -30,6 +33,51 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds to human readable string"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds / 60)
+    seconds = seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {seconds:.1f}s"
+    hours = int(minutes / 60)
+    minutes = minutes % 60
+    return f"{hours}h {minutes}m {seconds:.1f}s"
+
+def format_metrics(metrics: dict) -> str:
+    """Format metrics for display"""
+    lines = ["\n=== Processing Metrics ==="]
+    
+    # Overall stats
+    total_time = (metrics['end_time'] - metrics['start_time']).total_seconds()
+    lines.append(f"\nTotal Processing Time: {format_duration(total_time)}")
+    lines.append(f"Total Cases Processed: {metrics['total_processed']}")
+    
+    # Phase metrics
+    for phase, phase_metrics in metrics.get('phase_metrics', {}).items():
+        duration = phase_metrics.get('duration', 0)
+        lines.append(f"\n{phase} Phase:")
+        lines.append(f"  Duration: {format_duration(duration)}")
+        lines.append(f"  Cases Processed: {phase_metrics.get('total_processed', 0)}")
+        
+        if phase == ProcessingPhase.LOCAL:
+            lines.append(f"  High Confidence: {phase_metrics.get('high_confidence', 0)}")
+            lines.append(f"  Medium Confidence: {phase_metrics.get('medium_confidence', 0)}")
+            lines.append(f"  Low Confidence: {phase_metrics.get('low_confidence', 0)}")
+        elif phase == ProcessingPhase.LLM_VERIFY:
+            lines.append(f"  Verified Matches: {phase_metrics.get('verified_matches', 0)}")
+            lines.append(f"  Downgraded Cases: {phase_metrics.get('downgraded_cases', 0)}")
+        elif phase == ProcessingPhase.LLM_FULL:
+            lines.append(f"  Matched: {phase_metrics.get('matched', 0)}")
+            lines.append(f"  Unmatched: {phase_metrics.get('unmatched', 0)}")
+    
+    # Error summary
+    if metrics.get('errors'):
+        lines.append(f"\nTotal Errors: {len(metrics['errors'])}")
+        
+    return "\n".join(lines)
 
 async def verify_database():
     """Verify database state before processing."""
@@ -98,71 +146,97 @@ async def save_metrics(metrics: dict, batch_size: int):
     
     logger.info(f"Saved metrics to {metrics_file}")
 
-async def main():
-    """Main execution function."""
+def parse_args():
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Run batch processing of use cases")
-    parser.add_argument('--batch-size', type=int, default=20,
-                       help="Number of use cases to process in each batch")
-    parser.add_argument('--dry-run', action='store_true',
-                       help="Run without saving to database")
-    parser.add_argument('--min-confidence', type=float, default=0.45,
-                       help="Minimum confidence threshold for classification")
-    parser.add_argument('--max-cases', type=int, default=None,
-                       help="Maximum number of cases to process (default: all)")
-    args = parser.parse_args()
     
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Number of use cases to process in each batch"
+    )
+    
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.6,
+        help="Minimum confidence threshold for classification"
+    )
+    
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run in dry run mode (no database changes)"
+    )
+    
+    parser.add_argument(
+        "--skip-verification",
+        action="store_true",
+        help="Skip database verification"
+    )
+    
+    parser.add_argument(
+        "--max-cases",
+        type=int,
+        help="Maximum number of cases to process"
+    )
+    
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level"
+    )
+    
+    return parser.parse_args()
+
+def setup_logging(level: str):
+    """Set up logging configuration
+    
+    Args:
+        level: Logging level (DEBUG, INFO, WARNING, ERROR)
+    """
+    logging.basicConfig(
+        level=getattr(logging, level),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    
+    # Reduce verbosity of some loggers
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+async def main():
+    """Main entry point"""
+    args = parse_args()
+    setup_logging(args.log_level)
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting batch processing with size {args.batch_size}")
+    
+    if args.dry_run:
+        logger.info("DRY RUN MODE - No changes will be saved to database")
+        
     try:
-        # Verify database first
-        if not await verify_database():
-            logger.error("Database verification failed. Aborting batch processing.")
-            return
-            
-        # Initialize batch processor
         processor = BatchProcessor(
             batch_size=args.batch_size,
             min_confidence=args.min_confidence,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            skip_verification=args.skip_verification
         )
-        await processor.initialize()
         
-        try:
-            # Process batches until max_cases is reached or no more cases
-            logger.info(f"Starting batch processing with size {args.batch_size}")
-            total_processed = 0
-            metrics = None
-            
-            while True:
-                if args.max_cases and total_processed >= args.max_cases:
-                    logger.info(f"Reached maximum cases limit ({args.max_cases})")
-                    break
-                    
-                # Adjust batch size for last batch if max_cases specified
-                if args.max_cases:
-                    remaining = args.max_cases - total_processed
-                    if remaining < args.batch_size:
-                        processor.batch_size = remaining
-                
-                batch_metrics = await processor.process_batch()
-                if not batch_metrics or batch_metrics['total_processed'] == 0:
-                    logger.info("No more cases to process")
-                    break
-                    
-                total_processed += batch_metrics['total_processed']
-                metrics = batch_metrics  # Keep last batch metrics
-                
-                logger.info(f"Processed {total_processed} cases total")
-            
-            # Save final metrics
-            if metrics:
-                await save_metrics(metrics, args.batch_size)
-            
-        finally:
-            # Ensure cleanup
-            await processor.cleanup()
-            
+        await processor.run(max_cases=args.max_cases)
+        
     except Exception as e:
-        logger.error(f"Batch processing failed: {str(e)}")
-        raise
+        logger.error(f"Error during batch processing: {str(e)}")
+        sys.exit(1)
+        
+    finally:
+        if processor:
+            await processor.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main()) 

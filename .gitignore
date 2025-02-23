@@ -1,15 +1,50 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Virtual Environment
 .env
 .venv
 env/
 venv/
 ENV/
+
+# IDEs and editors
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# Logs and databases
 *.log
-output/
-.ipynb_checkpoints
+logs/
+*.db
+*.sqlite3
+
+# Project specific
 data/
+data_backup/
+output/
 **/backups/
+.ipynb_checkpoints
+
+# Checkpoints and temporary files
+data/checkpoints/
+**/temp/
+**/tmp/
+
+# Local configuration
+.env.local
+.env.*.local
+config.local.py
+
+# Dependencies
+node_modules/
+.next/
+dist/
+build/
+
+# System files
+.DS_Store
+Thumbs.db

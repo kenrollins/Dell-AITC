@@ -3,25 +3,100 @@
 import re
 import logging
 import numpy as np
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 from sentence_transformers import SentenceTransformer, util
 from ..config import get_settings
 
 class TextProcessor:
-    """Handle text processing and embedding operations"""
+    """Text processing utilities for embeddings and similarity"""
     
-    DEFAULT_MODEL = 'all-mpnet-base-v2'  # Better performance than MiniLM
-    FALLBACK_MODEL = 'all-MiniLM-L6-v2'  # Lightweight fallback
-    
-    def __init__(self, model_name: str = None):
-        try:
-            settings = get_settings()
-            self.model = SentenceTransformer(model_name or settings.sentence_transformer_model)
-            self.logger = logging.getLogger(__name__)
-            self.logger.info(f"Initialized semantic model: {model_name or settings.sentence_transformer_model}")
-        except Exception as e:
-            self.logger.warning(f"Failed to load primary model, falling back to all-MiniLM-L6-v2")
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+        """Initialize text processor
+        
+        Args:
+            model_name: Name of the sentence transformer model to use
+        """
+        self.model_name = model_name
+        self.model = None
+        self.logger = logging.getLogger(__name__)
+        
+    async def initialize(self):
+        """Initialize the text processor"""
+        self.logger.info(f"Initializing semantic model: {self.model_name}")
+        self.model = SentenceTransformer(self.model_name)
+        
+    async def cleanup(self):
+        """Clean up resources"""
+        pass  # No cleanup needed for sentence transformers
+        
+    def get_embedding(self, text: str) -> np.ndarray:
+        """Get embedding vector for text
+        
+        Args:
+            text: Text to get embedding for
+            
+        Returns:
+            Numpy array of embedding vector
+        """
+        if not text:
+            return np.zeros(384)  # Default embedding size for MiniLM
+            
+        return self.model.encode(text, convert_to_numpy=True)
+        
+    def calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """Calculate cosine similarity between two embeddings
+        
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+            
+        Returns:
+            Cosine similarity score between 0 and 1
+        """
+        # Normalize vectors
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+            
+        # Calculate cosine similarity
+        return float(np.dot(embedding1, embedding2) / (norm1 * norm2))
+        
+    def find_similar_texts(
+        self,
+        query: str,
+        texts: List[str],
+        min_similarity: float = 0.5,
+        max_results: int = 5
+    ) -> List[Dict[str, float]]:
+        """Find most similar texts to a query
+        
+        Args:
+            query: Query text to compare against
+            texts: List of texts to search
+            min_similarity: Minimum similarity threshold
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of dicts with text and similarity score
+        """
+        query_embedding = self.get_embedding(query)
+        results = []
+        
+        for text in texts:
+            text_embedding = self.get_embedding(text)
+            similarity = self.calculate_similarity(query_embedding, text_embedding)
+            
+            if similarity >= min_similarity:
+                results.append({
+                    'text': text,
+                    'similarity': similarity
+                })
+                
+        # Sort by similarity and limit results
+        results.sort(key=lambda x: x['similarity'], reverse=True)
+        return results[:max_results]
         
     def cleanup_text(self, text: Union[str, float, int, None], preserve_case: bool = False) -> str:
         """Standardize text for better matching"""
@@ -46,17 +121,6 @@ class TextProcessor:
         text = text.replace("nlp/nlu", "nlp nlu")
         
         return text.strip()
-        
-    def get_embedding(self, text: Union[str, float, int, None], normalize: bool = True) -> np.ndarray:
-        """Get embedding vector for text with improved preprocessing"""
-        # Clean and standardize text
-        text = self.cleanup_text(text)
-        
-        # Handle empty or invalid text
-        if not text:
-            return self.model.encode("", convert_to_tensor=True, normalize_embeddings=normalize)
-            
-        return self.model.encode(text, convert_to_tensor=True, normalize_embeddings=normalize)
         
     def calculate_semantic_similarity(self, 
                                    vec1: np.ndarray,

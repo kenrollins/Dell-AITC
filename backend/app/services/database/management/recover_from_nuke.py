@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 import logging
 from datetime import datetime
+from typing import List
 
 # Configure logging
 log_dir = Path("logs/database")
@@ -106,6 +107,13 @@ def main():
             "backend.app.services.database.management.migrations.v2_2_relationships"
         ):
             raise Exception("v2.2 relationship migration failed")
+            
+        # Step 6: Apply schema updates for keyword relevance
+        if not run_step(
+            "Applying Keyword Relevance Schema Updates",
+            "backend.app.services.database.management.update_schema"
+        ):
+            raise Exception("Keyword relevance schema update failed")
             
         logger.info("\n[SUCCESS] Database recovery completed successfully!")
         

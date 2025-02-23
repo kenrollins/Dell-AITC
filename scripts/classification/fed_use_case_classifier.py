@@ -74,7 +74,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple, Any, Union
 from dataclasses import dataclass
 from enum import Enum, auto
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 from neo4j.graph import Node
 from sentence_transformers import SentenceTransformer
 import openai
@@ -87,17 +87,20 @@ import torch
 from torch import Tensor
 from sentence_transformers import util
 import re
+from openai import AsyncOpenAI
+from backend.app.config import get_settings
 
-# =============================================================================
-# Configuration
-# =============================================================================
+# Configure logging
+log_dir = Path("logs/classification")
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / f'classification_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
 
-# After imports, before Config class
-# Configure logging with force=True to override any existing handlers
+# Single logging configuration with force=True
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
+        logging.FileHandler(log_file),
         logging.StreamHandler(sys.stdout)
     ],
     force=True
@@ -105,6 +108,12 @@ logging.basicConfig(
 
 # Ensure stdout is flushed immediately
 sys.stdout.reconfigure(line_buffering=True)
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Configuration
+# =============================================================================
 
 class MatchMethod(Enum):
     """Enum for classification methods"""
@@ -125,7 +134,7 @@ def load_neo4j_schema() -> Dict[str, Any]:
     schema_path = Path("docs/neo4j/neo4j_schema.json")
     
     if not schema_path.exists():
-        logging.error(f"❌ Master schema not found at {schema_path}")
+        logging.error(f"[X] Master schema not found at {schema_path}")
         logging.error("Please ensure the schema file exists in the docs/neo4j directory")
         return {}
     
@@ -135,33 +144,33 @@ def load_neo4j_schema() -> Dict[str, Any]:
             
         # Validate schema version
         if 'version' not in schema:
-            logging.error("❌ Schema missing version information")
+            logging.error("[X] Schema missing version information")
             return {}
             
-        logging.info(f"✓ Loaded Neo4j schema version {schema['version']}")
+        logging.info(f"[+] Loaded Neo4j schema version {schema['version']}")
         
         # Validate required sections
         required_sections = ['nodes', 'relationships']
         for section in required_sections:
             if section not in schema:
-                logging.error(f"❌ Schema missing required section: {section}")
+                logging.error(f"[X] Schema missing required section: {section}")
                 return {}
             else:
-                logging.info(f"✓ Found {len(schema[section])} {section}")
+                logging.info(f"[+] Found {len(schema[section])} {section}")
         
         # Validate core node types
         required_nodes = ['AICategory', 'UseCase', 'Agency', 'Bureau']
         for node in required_nodes:
             if node not in schema['nodes']:
-                logging.error(f"❌ Schema missing required node type: {node}")
+                logging.error(f"[X] Schema missing required node type: {node}")
                 return {}
             else:
-                logging.info(f"✓ Validated {node} node schema")
+                logging.info(f"[+] Validated {node} node schema")
         
         return schema
         
     except Exception as e:
-        logging.error(f"❌ Error loading schema: {str(e)}")
+        logging.error(f"[X] Error loading schema: {str(e)}")
         return {}
 
 class Config:
@@ -178,7 +187,7 @@ class Config:
     
     class LLM:
         """LLM settings"""
-        MODEL = "gpt-4-turbo-preview"
+        MODEL = "gpt-4o-mini"
         TEMPERATURE = 0.3
         MAX_TOKENS = 500
         TIMEOUT = 30
@@ -439,182 +448,257 @@ class UnmatchedAnalysis:
     status: str  # NEW, REVIEWED, ACTIONED
 
 class Neo4jClassifier:
-    """Main classifier class with direct Neo4j integration"""
+    """Neo4j-based federal use case classifier"""
     
-    def __init__(self, driver=None, dry_run=False):
-        """Initialize the classifier with Neo4j driver"""
-        if driver:
-            self.driver = driver
-        else:
-            self.setup_neo4j_connection()
-        self.setup_embeddings_model()
-        self.setup_llm_client()
-        self.categories = self.get_technology_categories()
-        logging.info(f"Found {len(self.categories)} technology categories")
-        self.text_processor = TextProcessor()
-        self.llm_processor = LLMProcessor()
-        self.schema_metadata = {
-            'zones': [],
-            'capabilities': [],
-            'patterns': []
-        }
-        self.load_schema_metadata()
+    def __init__(self, db_uri: str, db_user: str, db_password: str,
+                 api_key: str, dry_run: bool = False):
+        """Initialize classifier with database connection"""
+        self.db_uri = db_uri
+        self.db_user = db_user
+        self.db_password = db_password
+        self.api_key = api_key
         self.dry_run = dry_run
         
-    def setup_neo4j_connection(self):
-        """Initialize Neo4j connection and verify schema"""
-        uri = os.getenv("NEO4J_URI")
-        user = os.getenv("NEO4J_USER")
-        password = os.getenv("NEO4J_PASSWORD")
+        # Required node labels for schema validation
+        self.required_labels = ['AICategory', 'UseCase', 'Agency', 'Bureau']
         
-        if not all([uri, user, password]):
-            raise ValueError("Missing required Neo4j environment variables")
-            
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        self._verify_schema()
+        # Initialize components as None
+        self.driver = None
+        self.model = None
+        self.llm_client = None
         
-    def _verify_schema(self):
-        """Verify required Neo4j schema elements exist"""
-        with self.driver.session() as session:
-            # Check for required nodes
-            for node_type in ["UseCase", "AICategory", "Zone", "Keyword", "Capability"]:
-                result = session.run(f"MATCH (n:{node_type}) RETURN count(n) as count")
-                count = result.single()["count"]
-                logging.info(f"Found {count} nodes of type {node_type}")
-                if count == 0:
-                    logging.warning(f"No nodes found of type {node_type}")
-            
-            # Enhanced keyword type validation
-            result = session.run("""
-                MATCH (k:Keyword)
-                RETURN k.type as type, count(k) as count
-                ORDER BY count DESC
-            """)
-            logging.info("\nKeyword Type Distribution:")
-            for record in result:
-                logging.info(f"- {record['type']}: {record['count']} keywords")
-            
-            # Verify keyword types
-            result = session.run("""
-                MATCH (k:Keyword)
-                WHERE NOT k.type IN ['technical_keywords', 'capabilities', 'business_language']
-                RETURN count(k) as invalid_count
-            """)
-            invalid_count = result.single()["invalid_count"]
-            if invalid_count > 0:
-                logging.warning(f"Found {invalid_count} keywords with invalid type")
-
-            # Check keyword relevance scores
-            result = session.run("""
-                MATCH (k:Keyword)
-                WHERE k.relevance_score IS NULL
-                RETURN count(k) as missing_score_count
-            """)
-            missing_scores = result.single()["missing_score_count"]
-            if missing_scores > 0:
-                logging.warning(f"Found {missing_scores} keywords missing relevance scores")
-
-    def load_schema_metadata(self):
-        """Load and cache schema metadata for matching"""
-        # Initialize empty metadata
-        self.schema_metadata = {
-            'zones': [],
-            'capabilities': [],
-            'patterns': []
-        }
+        # Load settings
+        settings = get_settings()
+        self.model_name = settings.sentence_transformer_model
+        self.base_url = settings.openai_base_url
+        self.timeout = settings.openai_timeout
+        self.max_retries = settings.openai_max_retries
         
-        # Try to load each type of metadata separately
-        with self.driver.session() as session:
-            try:
-                # Load zones if they exist
-                result = session.run("MATCH (z:Zone) RETURN collect(z.name) as zones")
-                zones = result.single()
-                if zones and zones.get('zones'):
-                    self.schema_metadata['zones'] = zones['zones']
-                    
-                # Load capabilities if they exist
-                result = session.run("MATCH (c:Capability) RETURN collect(c.name) as capabilities")
-                capabilities = result.single()
-                if capabilities and capabilities.get('capabilities'):
-                    self.schema_metadata['capabilities'] = capabilities['capabilities']
-                    
-                # Load integration patterns if they exist
-                result = session.run("MATCH (p:IntegrationPattern) RETURN collect(p.name) as patterns")
-                patterns = result.single()
-                if patterns and patterns.get('patterns'):
-                    self.schema_metadata['patterns'] = patterns['patterns']
-                    
-                logging.info(f"Loaded schema metadata: {len(self.schema_metadata['zones'])} zones, " + 
-                           f"{len(self.schema_metadata['capabilities'])} capabilities, " +
-                           f"{len(self.schema_metadata['patterns'])} patterns")
-                           
-            except Exception as e:
-                logging.warning(f"Error loading schema metadata: {str(e)}")
-                # Continue with empty metadata
+        self.logger = logging.getLogger(__name__)
 
-    def setup_embeddings_model(self):
-        """Initialize the sentence transformer model for embeddings"""
-        self.text_processor = TextProcessor()
-        logging.info("✓ Initialized sentence transformer model")
-    
-    def setup_llm_client(self):
-        """Initialize the LLM client"""
-        self.llm_processor = LLMProcessor()
-        logging.info("✓ Initialized LLM processor")
-    
-    def _calculate_keyword_score(self, use_case_text: str, category: AICategory) -> float:
-        """Calculate keyword-based score."""
+    async def initialize(self):
+        """Initialize classifier components"""
+        self.logger.info("Initializing classifier...")
+        
+        # Setup Neo4j connection
+        await self.setup_neo4j_connection()
+        
+        # Verify schema
+        await self._verify_schema()
+        
+        # Load schema metadata
+        await self.load_schema_metadata()
+        
+        # Setup embeddings model
+        await self.setup_embeddings_model()
+        
+        # Setup LLM client
+        await self.setup_llm_client()
+        
+        # Load technology categories
+        self.categories = await self.get_technology_categories()
+        self.logger.info(f"Found {len(self.categories)} technology categories")
+        
+        self.logger.info("Classifier initialization complete")
+
+    async def cleanup(self):
+        """Clean up resources."""
+        if self.driver:
+            await self.driver.close()
+        if self.llm_processor:
+            await self.llm_processor.cleanup()
+        self.logger.info("Classifier cleanup complete")
+
+    async def setup_neo4j_connection(self):
+        """Initialize Neo4j database connection"""
         try:
-            # Get category keywords
-            keywords = category.keywords
+            self.driver = AsyncGraphDatabase.driver(
+                self.db_uri,
+                auth=(self.db_user, self.db_password)
+            )
+            # Test connection
+            async with self.driver.session() as session:
+                result = await session.run("CALL dbms.components() YIELD name, versions RETURN name, versions")
+                record = await result.single()
+                self.logger.info(f"[+] Connected to Neo4j: {record['name']} {record['versions'][0]}")
+        except Exception as e:
+            self.logger.error(f"[X] Failed to connect to Neo4j: {str(e)}")
+            raise
+
+    async def _verify_schema(self):
+        """Verify schema against database"""
+        for label in self.required_labels:
+            # Verify label exists
+            async with self.driver.session() as session:
+                result = await session.run(
+                    f"MATCH (n:{label}) RETURN count(n) as count"
+                )
+                record = await result.single()
+                count = record["count"] if record else 0
+                self.logger.info(f"[+] Validated {label} node schema")
+
+    async def load_schema_metadata(self):
+        """Load schema metadata from database"""
+        async with self.driver.session() as session:
+            # Get capabilities
+            result = await session.run(
+                "MATCH (c:Capability) RETURN collect(c.name) as capabilities"
+            )
+            record = await result.single()
+            capabilities = record["capabilities"] if record else []
+            
+            # Get integration patterns
+            result = await session.run(
+                "MATCH (p:IntegrationPattern) RETURN collect(p.name) as patterns"
+            )
+            record = await result.single()
+            patterns = record["patterns"] if record else []
+            
+            # Get zones
+            result = await session.run(
+                "MATCH (z:Zone) RETURN collect(z.name) as zones"
+            )
+            record = await result.single()
+            zones = record["zones"] if record else []
+            
+            self.logger.info(f"Loaded schema metadata: {len(zones)} zones, {len(capabilities)} capabilities, {len(patterns)} patterns")
+
+    async def setup_embeddings_model(self):
+        """Initialize sentence transformer model"""
+        self.logger.info("Initializing sentence transformer model...")
+        # Load model
+        self.model = SentenceTransformer(self.model_name)
+        self.logger.info("[+] Initialized sentence transformer model")
+
+    async def setup_llm_client(self):
+        """Initialize LLM client"""
+        self.logger.info("Initializing LLM processor...")
+        # Initialize OpenAI client
+        self.llm_client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            max_retries=self.max_retries
+        )
+        self.logger.info("[+] Initialized LLM processor")
+    
+    async def get_technology_categories(self) -> Dict[str, dict]:
+        """Get all technology categories from database"""
+        async with self.driver.session() as session:
+            result = await session.run("""
+                MATCH (c:AICategory)
+                OPTIONAL MATCH (c)-[:BELONGS_TO]->(z:Zone)
+                OPTIONAL MATCH (c)-[r:HAS_KEYWORD]->(k:Keyword)
+                WITH c, z,
+                     collect(DISTINCT {
+                         name: k.name,
+                         type: k.type,
+                         relevance_score: coalesce(k.relevance_score, 0.5),
+                         relationship_relevance: coalesce(r.relevance, 0.5)
+                     }) as keywords
+                RETURN {
+                    id: c.id,
+                    name: c.name,
+                    definition: c.category_definition,
+                    zone: z.name,
+                    keywords: [kw IN keywords WHERE kw.type = 'technical_keywords' | kw],
+                    capabilities: [kw IN keywords WHERE kw.type = 'capabilities' | kw],
+                    business_language: [kw IN keywords WHERE kw.type = 'business_language' | kw],
+                    maturity_level: c.maturity_level
+                } as category
+            """)
+            categories = {}
+            async for record in result:
+                category = record["category"]
+                categories[category["name"]] = category
+            return categories
+
+    def _calculate_keyword_score(self, use_case_text: str, category: Dict[str, Any]) -> float:
+        """Calculate keyword-based match score"""
+        try:
+            # Combine all keywords with their relevance scores
+            keywords = []
+            if 'keywords' in category:
+                keywords.extend([(kw['name'], kw['relevance_score'] * kw['relationship_relevance']) 
+                               for kw in category['keywords']])
+            if 'capabilities' in category:
+                keywords.extend([(kw['name'], kw['relevance_score'] * kw['relationship_relevance']) 
+                               for kw in category['capabilities']])
+            if 'business_language' in category:
+                keywords.extend([(kw['name'], kw['relevance_score'] * kw['relationship_relevance']) 
+                               for kw in category['business_language']])
+            
             if not keywords:
                 return 0.0
             
-            # Convert to lowercase for case-insensitive matching
-            use_case_text = use_case_text.lower()
+            # Convert text to lowercase for case-insensitive matching
+            text = use_case_text.lower()
             
-            # Extract keyword names and convert to lowercase
-            keyword_names = [k.lower() for k in keywords if k]
-            if not keyword_names:
+            # Calculate weighted score
+            total_score = 0.0
+            total_weight = 0.0
+            
+            for keyword, weight in keywords:
+                if keyword.lower() in text:
+                    total_score += weight
+                total_weight += weight
+            
+            return total_score / total_weight if total_weight > 0 else 0.0
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating keyword score: {str(e)}")
+            return 0.0
+
+    def _calculate_semantic_score(self, use_case_text: str, category: Dict[str, Any]) -> float:
+        """Calculate semantic similarity score"""
+        try:
+            # Get category text elements
+            category_texts = []
+            if 'definition' in category:
+                category_texts.append(category['definition'])
+            
+            # Add keyword descriptions
+            if 'keywords' in category:
+                category_texts.extend([kw['name'] for kw in category['keywords']])
+            if 'capabilities' in category:
+                category_texts.extend([kw['name'] for kw in category['capabilities']])
+            if 'business_language' in category:
+                category_texts.extend([kw['name'] for kw in category['business_language']])
+            
+            if not category_texts:
                 return 0.0
             
-            # Count matches
-            matches = sum(1 for k in keyword_names if k in use_case_text)
+            # Combine category texts
+            category_text = ' '.join(category_texts)
             
-            # Calculate score based on matches
-            score = matches / len(keyword_names)
-            
-            # Normalize score to 0-1 range
-            return min(1.0, score)
-            
-        except Exception as e:
-            logging.error(f"Error calculating keyword score: {str(e)}")
-            return 0.0
-
-    def _calculate_semantic_score(self, use_case_text: str, category_text: str) -> float:
-        """Calculate semantic similarity score."""
-        try:
-            # Get embeddings
-            use_case_embedding = self.text_processor.get_embedding(use_case_text)
-            category_embedding = self.text_processor.get_embedding(category_text)
+            # Calculate embeddings
+            use_case_embedding = self.model.encode(use_case_text, convert_to_tensor=True)
+            category_embedding = self.model.encode(category_text, convert_to_tensor=True)
             
             # Calculate cosine similarity
-            similarity = self.text_processor.calculate_semantic_similarity(
-                use_case_embedding,
-                category_embedding
-            )
-            
-            return similarity
+            similarity = util.pytorch_cos_sim(use_case_embedding, category_embedding)
+            return float(similarity[0][0])
             
         except Exception as e:
-            logging.error(f"Error calculating semantic score: {str(e)}")
+            self.logger.error(f"Error calculating semantic score: {str(e)}")
             return 0.0
 
-    def _calculate_llm_score(self, use_case_text: str, category_text: str) -> Tuple[float, str]:
+    async def _calculate_llm_score(self, use_case_text: str, category: Dict[str, Any]) -> Tuple[float, str]:
         """Calculate LLM-based verification score."""
         try:
+            # Prepare category text by combining definition and keywords
+            category_text = f"Category: {category['name']}\n"
+            category_text += f"Definition: {category.get('definition', '')}\n"
+            
+            if category.get('keywords'):
+                category_text += f"Technical Keywords: {', '.join(category['keywords'])}\n"
+            if category.get('capabilities'):
+                category_text += f"Capabilities: {', '.join(category['capabilities'])}\n"
+            if category.get('business_language'):
+                category_text += f"Business Terms: {', '.join(category['business_language'])}\n"
+            
             # Get LLM analysis
-            response = self.llm_processor.verify_match(
+            response = await self.llm_processor.verify_match(
                 use_case_text=use_case_text,
                 category_text=category_text
             )
@@ -630,8 +714,8 @@ class Neo4jClassifier:
             return score, analysis
             
         except Exception as e:
-            logging.error(f"Error calculating LLM score: {str(e)}")
-            return 0.0, f"Error during LLM verification: {str(e)}"
+            self.logger.error(f"Error calculating LLM score: {str(e)}")
+            return 0.0, f"Error: {str(e)}"
         
     def _determine_final_score(self, 
                              keyword_score: float,
@@ -742,7 +826,7 @@ class Neo4jClassifier:
         
         # Safely get text fields with fallback to empty string
         name = category.get('name', '') or ''
-        description = category.get('description', '') or ''
+        description = category.get('definition', '') or ''
         
         if name.strip():
             text_parts.append(name.strip())
@@ -755,176 +839,118 @@ class Neo4jClassifier:
         
         return " [FIELD_BREAK] ".join(text_parts)
 
-    def classify_use_case(self, use_case):
+    async def classify_use_case(self, use_case: Dict[str, Any]) -> Dict[str, Any]:
         """Classify a use case against available technology categories."""
         try:
+            # Prepare use case text
             use_case_text = self._prepare_use_case_text(use_case)
-            matches = []
             
-            # First pass: Quick filtering using keyword and semantic matching
+            # Track candidates
             candidates = []
-            for category in self.categories:
-                category_text = self._prepare_category_text(category)
-                
+            
+            # Process each category
+            for category_name, category in self.categories.items():
                 # Calculate keyword and semantic scores
                 keyword_score = self._calculate_keyword_score(use_case_text, category)
-                semantic_score = self._calculate_semantic_score(use_case_text, category_text)
+                semantic_score = self._calculate_semantic_score(use_case_text, category)
                 
                 # Only proceed if either score is above threshold
-                if keyword_score >= Config.Scoring.WEIGHTS['keyword']['threshold'] or \
-                   semantic_score >= Config.Scoring.WEIGHTS['semantic']['threshold']:
+                if keyword_score >= 0.3 or semantic_score >= 0.35:
+                    # Calculate initial score
+                    initial_score = (keyword_score * 0.6) + (semantic_score * 0.4)
+                    
                     candidates.append({
                         'category': category,
-                        'category_text': category_text,
+                        'category_name': category_name,
                         'keyword_score': keyword_score,
-                        'semantic_score': semantic_score
+                        'semantic_score': semantic_score,
+                        'initial_score': initial_score
                     })
             
-            # Sort candidates by combined score
-            top_candidates = sorted(
-                candidates,
-                key=lambda x: (
-                    x['keyword_score'] * Config.Scoring.WEIGHTS['keyword']['score_weight'] +
-                    x['semantic_score'] * Config.Scoring.WEIGHTS['semantic']['score_weight']
-                ),
-                reverse=True
-            )
-            
-            # Second pass: Detailed LLM analysis only for promising candidates
-            for candidate in top_candidates[:5]:  # Limit to top 5 candidates
-                category = candidate['category']
-                llm_score, llm_analysis = self._calculate_llm_score(
-                    use_case_text,
-                    candidate['category_text']
-                )
+            # Evaluate candidates with LLM if we have any
+            if candidates:
+                candidates = await self._evaluate_candidates(use_case_text, candidates)
                 
-                # Calculate final score
-                final_score = (
-                    candidate['keyword_score'] * Config.Scoring.WEIGHTS['keyword']['score_weight'] +
-                    candidate['semantic_score'] * Config.Scoring.WEIGHTS['semantic']['score_weight'] +
-                    llm_score * Config.Scoring.WEIGHTS['llm']['score_weight']
-                )
-                
-                if final_score >= Config.Scoring.THRESHOLDS['related']:
-                    relationship_type = self._determine_relationship_type(final_score)
-                    match_result = {
-                        'category_id': category['id'],
-                        'category_name': category['name'],
-                        'scores': {
+                # Return top matches if any meet threshold
+                matches = []
+                for candidate in candidates:
+                    if candidate['final_score'] >= 0.5:  # Minimum threshold for matches
+                        matches.append({
+                            'category_name': candidate['category_name'],
+                            'confidence': candidate['final_score'],
                             'keyword_score': candidate['keyword_score'],
                             'semantic_score': candidate['semantic_score'],
-                            'llm_score': llm_score,
-                            'final_score': final_score
-                        },
-                        'relationship_type': relationship_type,
-                        'llm_analysis': llm_analysis
+                            'llm_score': candidate.get('llm_score', 0.0),
+                            'llm_analysis': candidate.get('llm_analysis', '')
+                        })
+                
+                if matches:
+                    return {
+                        'use_case_id': use_case['id'],
+                        'matches': matches,
+                        'status': 'success'
                     }
-                    matches.append(match_result)
             
-            # Sort matches by final score
-            if matches:
-                matches.sort(key=lambda x: x['scores']['final_score'], reverse=True)
-                relationship_type = matches[0]['relationship_type']
-            else:
-                relationship_type = 'NO_MATCH'
-            
-            result = {
-                'use_case_id': use_case.get('id'),
-                'matches': matches,
-                'relationship_type': relationship_type,
-                'scores': {  # Initialize empty scores for consistency
-                    'keyword_score': 0.0,
-                    'semantic_score': 0.0,
-                    'llm_score': 0.0,
-                    'final_score': 0.0
-                }
+            # No matches found
+            return {
+                'use_case_id': use_case['id'],
+                'matches': [],
+                'status': 'no_matches'
             }
             
-            # Update scores with best match if available
-            if matches:
-                result['scores'] = matches[0]['scores']
-            
-            return result
-            
         except Exception as e:
-            logging.error(f"Error processing use case {use_case.get('id')}: {str(e)}")
+            self.logger.error(f"Error classifying use case: {str(e)}")
             return {
-                'use_case_id': use_case.get('id'),
+                'use_case_id': use_case.get('id', 'unknown'),
                 'matches': [],
-                'relationship_type': 'NO_MATCH',
-                'scores': {  # Initialize empty scores even in error case
-                    'keyword_score': 0.0,
-                    'semantic_score': 0.0,
-                    'llm_score': 0.0,
-                    'final_score': 0.0
-                },
+                'status': 'error',
                 'error': str(e)
             }
 
-    def get_unclassified_use_cases(self, limit: Optional[int] = None) -> List[dict]:
-        """Fetch use cases without technology classifications"""
-        query = """
-        MATCH (u:UseCase)
-        OPTIONAL MATCH (u)-[:IMPLEMENTED_BY]->(a:Agency)
-        WHERE NOT EXISTS((u)-[:USES_TECHNOLOGY]->(:AICategory))
-        RETURN {
-            id: u.id,
-            name: u.name,
-            description: u.description,
-            purpose_benefits: u.purpose_benefits,
-            outputs: u.outputs,
-            agency: {
-                name: CASE WHEN a IS NOT NULL THEN a.name ELSE 'Unknown Agency' END,
-                abbreviation: CASE WHEN a IS NOT NULL THEN COALESCE(a.abbreviation, 'Unknown') ELSE 'Unknown' END
-            }
-        } as use_case
-        ORDER BY use_case.id
-        """
-        if limit:
-            query += f" LIMIT {limit}"
+    async def get_unclassified_use_cases(self, limit: Optional[int] = None) -> List[Dict]:
+        """Get unclassified use cases from Neo4j.
         
-        with self.driver.session() as session:
-            result = session.run(query)
-            return [dict(record["use_case"]) for record in result]
-
-    def get_technology_categories(self) -> List[dict]:
-        """Fetch all technology categories with their properties"""
-        query = """
-        MATCH (c:AICategory)
-        WITH c
-        // Get keywords
-        OPTIONAL MATCH (c)-[:HAS_KEYWORD]->(k:Keyword)
-        WHERE k.type IN ['technical_keywords', 'capabilities', 'business_language']
-        WITH c, 
-             collect(DISTINCT {
-                 name: k.name,
-                 type: k.type,
-                 relevance_score: COALESCE(k.relevance_score, 0.5)
-             }) as keywords
-        // Get capabilities
-        OPTIONAL MATCH (c)-[:HAS_CAPABILITY]->(cap:Capability)
-        WITH c, keywords,
-             collect(DISTINCT cap.name) as capabilities
-        // Get zone info
-        OPTIONAL MATCH (c)-[:BELONGS_TO]->(z:Zone)
-        RETURN {
-            id: c.id,
-            name: c.name,
-            description: c.category_definition,
-            maturity_level: c.maturity_level,
-            keywords: keywords,
-            capabilities: capabilities,
-            zone: CASE WHEN z IS NOT NULL THEN z.name ELSE null END
-        } as category
-        ORDER BY c.name
+        Args:
+            limit: Optional maximum number of use cases to return
+            
+        Returns:
+            List of unclassified use case dictionaries
         """
-        
-        with self.driver.session() as session:
-            result = session.run(query)
-            categories = [dict(record["category"]) for record in result]
-            if not categories:
-                raise ValueError("No technology categories found in the database")
-            return categories
+        if not self.driver:
+            self.setup_neo4j_connection()
+            
+        session = self.driver.session()
+        try:
+            # Build query
+            query = """
+            MATCH (u:UseCase)
+            WHERE NOT EXISTS((u)-[:CLASSIFIED_AS]->(:AICategory))
+            RETURN {
+                id: u.id,
+                name: u.name,
+                description: u.description,
+                purpose_benefits: u.purpose_benefits,
+                outputs: u.outputs,
+                status: u.status,
+                dev_stage: u.dev_stage,
+                dev_method: u.dev_method
+            } as use_case
+            """
+            
+            if limit:
+                query += f" LIMIT {limit}"
+                
+            # Execute query
+            result = await session.run(query)
+            use_cases = []
+            async for record in result:
+                use_cases.append(record['use_case'])
+                
+            self.logger.info(f"Found {len(use_cases)} unclassified use cases")
+            return use_cases
+            
+        finally:
+            await session.close()
 
     def _determine_relationship_type(self, final_score: float) -> str:
         """Determine relationship type based on score thresholds."""
@@ -935,6 +961,120 @@ class Neo4jClassifier:
         elif final_score >= Config.Scoring.THRESHOLDS['related']:
             return 'RELATED'
         return 'NO_MATCH'
+
+    async def analyze_no_match(self, use_case: Dict[str, Any], current_category: Optional[str] = None) -> Dict[str, Any]:
+        """Analyze a use case that didn't match any categories."""
+        try:
+            # Prepare context for unmatched analysis
+            context = {
+                "use_case_text": self._prepare_use_case_text(use_case),
+                "zones": self.schema_metadata.get("zones", []),
+                "capabilities": self.schema_metadata.get("capabilities", []),
+                "patterns": self.schema_metadata.get("patterns", [])
+            }
+            
+            analysis = await self.llm_processor.analyze_unmatched_case(**context)
+            
+            if self.dry_run:
+                logging.info(f"DRY RUN - Would save unmatched analysis: {analysis}")
+                return analysis
+            
+            # Save analysis to Neo4j
+            await self._save_unmatched_analysis(use_case["id"], analysis)
+            return analysis
+            
+        except Exception as e:
+            logging.error(f"Error analyzing unmatched case: {str(e)}")
+            return {
+                "reason_category": "ERROR",
+                "detailed_analysis": f"Error during analysis: {str(e)}",
+                "improvement_suggestions": [],
+                "potential_new_categories": [],
+                "key_technologies": [],
+                "closest_zone": "Unknown",
+                "missing_capabilities": []
+            }
+
+    async def _evaluate_candidates(self, use_case_text: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Evaluate candidates using LLM verification."""
+        try:
+            # Sort candidates by initial score
+            candidates.sort(key=lambda x: x['initial_score'], reverse=True)
+            
+            # Evaluate top candidates with LLM
+            for candidate in candidates[:5]:  # Limit to top 5 candidates
+                category = candidate['category']
+                llm_score, llm_analysis = await self._calculate_llm_score(
+                    use_case_text,
+                    category
+                )
+                
+                # Update candidate with LLM results
+                candidate['llm_score'] = llm_score
+                candidate['llm_analysis'] = llm_analysis
+                
+                # Calculate final score
+                matched_keywords = set(candidate.get('matched_keywords', []))
+                final_score, relationship_type = self._determine_final_score(
+                    candidate['keyword_score'],
+                    candidate['semantic_score'],
+                    llm_score,
+                    matched_keywords
+                )
+                candidate['final_score'] = final_score
+                candidate['relationship_type'] = relationship_type
+            
+            # Sort by final score
+            candidates.sort(key=lambda x: x['final_score'], reverse=True)
+            return candidates
+            
+        except Exception as e:
+            self.logger.error(f"Error evaluating candidates: {str(e)}")
+            return []
+
+    async def process_n_use_cases(self, n: int):
+        """Process n unclassified use cases"""
+        async with self.driver.session() as session:
+            # Get unclassified use cases
+            result = await session.run("""
+                MATCH (u:UseCase)
+                WHERE NOT EXISTS((u)-[:CLASSIFIED_AS]->(:AIClassification))
+                RETURN {
+                    id: u.id,
+                    name: u.name,
+                    description: u.description,
+                    purpose_benefits: u.purpose_benefits,
+                    outputs: u.outputs,
+                    stage: u.stage,
+                    dev_method: u.dev_method,
+                    topic_area: u.topic_area,
+                    impact_type: u.impact_type
+                } as use_case
+                LIMIT $limit
+            """, limit=n)
+            
+            use_cases = [record["use_case"] async for record in result]
+            self.logger.info(f"Found {len(use_cases)} unclassified use cases")
+            
+            # Process each use case
+            for use_case in use_cases:
+                try:
+                    result = await self.classify_use_case(use_case)
+                    if result["status"] == "success":
+                        self.logger.info(f"Successfully classified use case {use_case['id']}")
+                        for match in result["matches"]:
+                            self.logger.info(f"- {match['category_name']} (confidence: {match['confidence']:.2f})")
+                    elif result["status"] == "no_matches":
+                        self.logger.info(f"No matches found for use case {use_case['id']}")
+                    else:
+                        self.logger.error(f"Error classifying use case {use_case['id']}: {result.get('error', 'Unknown error')}")
+                except Exception as e:
+                    self.logger.error(f"Error processing use case {use_case['id']}: {str(e)}")
+                    continue
+
+    async def process_all_use_cases(self):
+        """Process all unclassified use cases"""
+        await self.process_n_use_cases(None)
 
 class TextProcessor:
     """Handle text processing and embedding operations"""
@@ -1073,26 +1213,49 @@ class TextProcessor:
             return round(total_score / total_weight, 3)
         return 0.0
 
+    async def initialize(self):
+        """Initialize the text processor"""
+        # This method is now empty as the initialization is handled in the classifier
+        pass
+
 class LLMProcessor:
     """Handle LLM-based verification using OpenAI"""
     
     def __init__(self):
-        self.setup_client()
-    
-    def setup_client(self):
-        """Setup OpenAI client"""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is required")
+        """Initialize the LLM processor"""
+        self.client = None
+        self.logger = logging.getLogger(__name__)
         
-        openai.api_key = api_key
-        self.model = Config.LLM.MODEL
-        self.client = openai.Client()
+    async def initialize(self):
+        """Initialize the OpenAI client"""
+        settings = get_settings()
+        
+        # Initialize OpenAI client with base URL for project-specific keys if needed
+        if settings.openai_api_key.startswith('sk-proj-'):
+            self.client = AsyncOpenAI(
+                api_key=settings.openai_api_key,
+                base_url="https://api.openai.com/v1"  # Ensure we're using the main API endpoint
+            )
+        else:
+            self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+            
+        self.logger.info("LLM processor initialized successfully")
     
-    def verify_match(self,
+    async def verify_match(self,
                     use_case_text: str,
                     category_text: str) -> Tuple[float, str]:
-        """Verify match using OpenAI"""
+        """Verify match using OpenAI
+        
+        Args:
+            use_case_text: Text of the use case to analyze
+            category_text: Text of the category to match against
+            
+        Returns:
+            Tuple of (confidence score, justification)
+        """
+        if not self.client:
+            await self.initialize()
+            
         prompt = f"""You are a strict JSON-only response system performing AI technology category matching.
         Evaluate if this use case matches the category based on the provided information.
         
@@ -1108,8 +1271,8 @@ class LLMProcessor:
         Evaluate if this use case matches this category and return ONLY the required JSON object."""
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = await self.client.chat.completions.create(
+                model=Config.LLM.MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=Config.LLM.TEMPERATURE,
                 max_tokens=Config.LLM.MAX_TOKENS,
@@ -1118,16 +1281,30 @@ class LLMProcessor:
             
             result = json.loads(response.choices[0].message.content)
             return float(result["confidence"]), result["justification"]
+            
         except Exception as e:
-            logging.error(f"LLM verification failed: {str(e)}")
+            self.logger.error(f"LLM verification failed: {str(e)}")
             return 0.0, f"Error during LLM verification: {str(e)}"
     
-    def analyze_unmatched_case(self,
+    async def analyze_unmatched_case(self,
                              use_case_text: str,
                              zones: List[str],
                              capabilities: List[str],
                              patterns: List[str]) -> Dict[str, Any]:
-        """Analyze why a use case doesn't match any categories"""
+        """Analyze why a use case doesn't match any categories
+        
+        Args:
+            use_case_text: Text of the use case to analyze
+            zones: List of available technology zones
+            capabilities: List of available capabilities
+            patterns: List of integration patterns
+            
+        Returns:
+            Dict containing the analysis results
+        """
+        if not self.client:
+            await self.initialize()
+            
         prompt = f"""You are a strict JSON-only response system analyzing unmatched AI use cases.
         Analyze why this use case doesn't match any existing categories and suggest improvements.
         
@@ -1150,33 +1327,24 @@ class LLMProcessor:
         Available Capabilities:
         {chr(10).join(f"- {cap}" for cap in capabilities)}
         
-        Available Patterns:
+        Integration Patterns:
         {chr(10).join(f"- {pattern}" for pattern in patterns)}
         
-        Analyze the use case and return ONLY the required JSON object."""
+        Analyze this use case and return ONLY the required JSON object."""
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = await self.client.chat.completions.create(
+                model=Config.LLM.MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=Config.LLM.TEMPERATURE,
                 max_tokens=Config.LLM.MAX_TOKENS,
                 response_format={ "type": "json_object" }
             )
             
-            result = json.loads(response.choices[0].message.content)
-            # Ensure all required fields are present with defaults if missing
-            return {
-                "reason_category": result.get("reason_category", "UNCLEAR_DESC"),
-                "detailed_analysis": result.get("detailed_analysis", "Analysis failed"),
-                "improvement_suggestions": result.get("improvement_suggestions", []),
-                "potential_new_categories": result.get("potential_new_categories", []),
-                "key_technologies": result.get("key_technologies", []),
-                "closest_zone": result.get("closest_zone", "Unknown"),
-                "missing_capabilities": result.get("missing_capabilities", [])
-            }
+            return json.loads(response.choices[0].message.content)
+            
         except Exception as e:
-            logging.error(f"Unmatched analysis failed: {str(e)}")
+            self.logger.error(f"LLM analysis failed: {str(e)}")
             return {
                 "reason_category": "ERROR",
                 "detailed_analysis": f"Error during analysis: {str(e)}",
@@ -1186,6 +1354,11 @@ class LLMProcessor:
                 "closest_zone": "Unknown",
                 "missing_capabilities": []
             }
+            
+    async def cleanup(self):
+        """Clean up resources"""
+        if hasattr(self.client, 'close'):
+            await self.client.close()
 
 async def verify_environment() -> bool:
     """Verify all required components of the environment are working."""
@@ -1196,28 +1369,28 @@ async def verify_environment() -> bool:
     logging.info("\n1. Checking Environment Variables...")
     for var in Config.REQUIRED_ENV_VARS['base']:
         if not os.getenv(var):
-            logging.error(f"❌ Missing required environment variable: {var}")
+            logging.error(f"[X] Missing required environment variable: {var}")
             checks_passed = False
         else:
-            logging.info(f"✓ Found {var}")
+            logging.info(f"[+] Found {var}")
 
     # 2. Check Neo4j Schema
     logging.info("\n2. Verifying Neo4j Schema...")
     try:
         schema = load_neo4j_schema()
         if not schema:
-            logging.error("❌ Could not load Neo4j schema")
+            logging.error("[X] Could not load Neo4j schema")
             checks_passed = False
         else:
-            logging.info("✓ Successfully loaded Neo4j schema")
+            logging.info("[+] Successfully loaded Neo4j schema")
             for key in ['nodes', 'relationships', 'version']:
                 if key not in schema:
-                    logging.error(f"❌ Schema missing required key: {key}")
+                    logging.error(f"[X] Schema missing required key: {key}")
                     checks_passed = False
                 else:
-                    logging.info(f"✓ Schema contains {key}")
+                    logging.info(f"[+] Schema contains {key}")
     except Exception as e:
-        logging.error(f"❌ Error loading schema: {str(e)}")
+        logging.error(f"[X] Error loading schema: {str(e)}")
         checks_passed = False
 
     # 3. Check Neo4j Connectivity
@@ -1226,21 +1399,21 @@ async def verify_environment() -> bool:
         uri = os.getenv("NEO4J_URI")
         user = os.getenv("NEO4J_USER")
         password = os.getenv("NEO4J_PASSWORD")
-        driver = GraphDatabase.driver(uri, auth=(user, password))
+        driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
         
         with driver.session() as session:
             result = session.run("CALL dbms.components() YIELD name, versions RETURN name, versions")
             version = result.single()
-            logging.info(f"✓ Connected to Neo4j: {version['name']} {version['versions'][0]}")
+            logging.info(f"[+] Connected to Neo4j: {version['name']} {version['versions'][0]}")
             
             constraints = session.run("SHOW CONSTRAINTS").data()
             if not constraints:
                 logging.warning("⚠️ No constraints found in database")
             else:
-                logging.info(f"✓ Found {len(constraints)} constraints")
+                logging.info(f"[+] Found {len(constraints)} constraints")
         driver.close()
     except Exception as e:
-        logging.error(f"❌ Neo4j connection failed: {str(e)}")
+        logging.error(f"[X] Neo4j connection failed: {str(e)}")
         checks_passed = False
 
     # 4. Check OpenAI
@@ -1248,7 +1421,7 @@ async def verify_environment() -> bool:
     try:
         client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
         models = client.models.list()
-        logging.info("✓ Successfully connected to OpenAI API")
+        logging.info("[+] Successfully connected to OpenAI API")
         
         if Config.LLM.MODEL not in [m.id for m in models]:
             logging.warning(f"⚠️ Configured model {Config.LLM.MODEL} not found in available models")
@@ -1286,34 +1459,34 @@ async def verify_environment() -> bool:
             missing_fields = [field for field in required_fields if field not in result]
             
             if missing_fields:
-                logging.error(f"❌ LLM response missing required fields: {missing_fields}")
+                logging.error(f"[X] LLM response missing required fields: {missing_fields}")
                 checks_passed = False
             else:
                 # Validate field types
                 if not isinstance(result["confidence"], (int, float)):
-                    logging.error("❌ LLM response 'confidence' field is not a number")
+                    logging.error("[X] LLM response 'confidence' field is not a number")
                     checks_passed = False
                 if result["relationship_type"] not in ["PRIMARY", "SECONDARY", "RELATED", "NO_MATCH"]:
-                    logging.error("❌ LLM response 'relationship_type' field has invalid value")
+                    logging.error("[X] LLM response 'relationship_type' field has invalid value")
                     checks_passed = False
                 if not isinstance(result["key_alignments"], list):
-                    logging.error("❌ LLM response 'key_alignments' field is not a list")
+                    logging.error("[X] LLM response 'key_alignments' field is not a list")
                     checks_passed = False
                 if not isinstance(result["potential_gaps"], list):
-                    logging.error("❌ LLM response 'potential_gaps' field is not a list")
+                    logging.error("[X] LLM response 'potential_gaps' field is not a list")
                     checks_passed = False
                 
                 if checks_passed:
-                    logging.info("✓ LLM response format verified successfully")
+                    logging.info("[+] LLM response format verified successfully")
                     logging.info(f"Sample confidence score: {result['confidence']}")
                     logging.info(f"Sample relationship type: {result['relationship_type']}")
             
         except json.JSONDecodeError:
-            logging.error("❌ LLM response is not valid JSON")
+            logging.error("[X] LLM response is not valid JSON")
             checks_passed = False
             
     except Exception as e:
-        logging.error(f"❌ OpenAI API test failed: {str(e)}")
+        logging.error(f"[X] OpenAI API test failed: {str(e)}")
         checks_passed = False
 
     # 5. Check Sentence Transformer
@@ -1321,17 +1494,17 @@ async def verify_environment() -> bool:
     try:
         model = SentenceTransformer('all-MiniLM-L6-v2')
         test_embedding = model.encode("Test sentence", convert_to_tensor=True)
-        logging.info("✓ Successfully loaded sentence transformer model")
+        logging.info("[+] Successfully loaded sentence transformer model")
     except Exception as e:
-        logging.error(f"❌ Sentence transformer test failed: {str(e)}")
+        logging.error(f"[X] Sentence transformer test failed: {str(e)}")
         checks_passed = False
 
     # Summary
     logging.info("\n=== Verification Summary ===")
     if checks_passed:
-        logging.info("✓ All environment checks passed successfully!")
+        logging.info("[+] All environment checks passed successfully!")
     else:
-        logging.error("❌ Some environment checks failed. Please review the logs above.")
+        logging.error("[X] Some environment checks failed. Please review the logs above.")
     
     return checks_passed
 
@@ -1402,229 +1575,59 @@ async def compare_with_deprecated(use_case: dict, results: List[MatchResult]) ->
     except Exception as e:
         logging.error(f"Error during comparison: {str(e)}")
 
-def main():
-    """Main entry point for the classifier"""
-    parser = argparse.ArgumentParser(description='Federal Use Case Classifier')
-    parser.add_argument('-n', '--num-cases', type=int, default=None,
-                       help='Number of use cases to process')
-    parser.add_argument('--dry-run', action='store_true',
-                       help='Run without making changes to Neo4j')
-    parser.add_argument('--verify-env', action='store_true',
-                       help='Only verify environment and exit')
-    parser.add_argument('--log-level', default='INFO',
-                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                       help='Set the logging level')
-    args = parser.parse_args()
-
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-
+async def main(args):
+    """Main entry point"""
     try:
-        # Initialize classifier
-        classifier = Neo4jClassifier()
+        # Load environment variables
+        load_dotenv()
         
-        # Load schema metadata
-        classifier.load_schema_metadata()
+        # Get required environment variables
+        db_uri = os.getenv("NEO4J_URI")
+        db_user = os.getenv("NEO4J_USER")
+        db_password = os.getenv("NEO4J_PASSWORD")
+        api_key = os.getenv("OPENAI_API_KEY")
         
-        # Get unclassified use cases
-        use_cases = classifier.get_unclassified_use_cases(limit=args.num_cases)
-        logging.info(f"Found {len(use_cases)} unclassified use cases")
-        
-        # Get technology categories
-        try:
-            categories = classifier.get_technology_categories()
-            logging.info(f"Found {len(categories)} technology categories")
-            
-            # Log available categories
-            logging.info("\nAvailable Technology Categories:")
-            for cat in categories:
-                logging.info(f"  - {cat['id']}: {cat.get('name', 'Unnamed')} ({len(cat.get('keywords', []))} keywords)")
-                
-        except ValueError as e:
-            logging.error(str(e))
+        # Validate environment variables
+        if not all([db_uri, db_user, db_password, api_key]):
+            logging.error("Missing required environment variables")
             return 1
-            
-        if args.dry_run:
-            logging.info("\n=== DRY RUN CLASSIFICATION PREVIEW ===")
-            
-        # Track statistics
-        total_matches = 0
-        match_types = {'PRIMARY': 0, 'SECONDARY': 0, 'RELATED': 0, 'NO_MATCH': 0}
-        method_scores = {'keyword': [], 'semantic': [], 'llm': []}
-            
-        # Process each use case
-        for use_case in use_cases:
-            try:
-                logging.info(f"\n{'='*80}")
-                logging.info(f"Processing Use Case: {use_case.get('name', use_case['id'])}")
-                
-                # Add agency details with better formatting
-                agency_info = "Unknown Agency"
-                if use_case.get('agency'):
-                    agency_abbr = use_case['agency'].get('abbreviation', '')
-                    agency_name = use_case['agency'].get('name', '')
-                    if agency_abbr and agency_name:
-                        agency_info = f"{agency_abbr} ({agency_name})"
-                    elif agency_abbr:
-                        agency_info = agency_abbr
-                    elif agency_name:
-                        agency_info = agency_name
-                
-                logging.info(f"Agency: {agency_info}")
-                
-                # Show purpose/benefits and outputs if available
-                purpose_benefits = use_case.get('purpose_benefits', '')
-                if purpose_benefits:
-                    logging.info(f"\nPurpose & Benefits: {purpose_benefits[:200]}...")
-                
-                outputs = use_case.get('outputs', '')
-                if outputs:
-                    logging.info(f"\nOutputs: {outputs[:200]}...")
-                
-                matches = []
-                no_match_reasons = []
-                
-                # Test against each category
-                for category in categories:
-                    result = classifier.classify_use_case(use_case)
-                    
-                    # Track method scores
-                    method_scores['keyword'].append(result['scores']['keyword_score'])
-                    method_scores['semantic'].append(result['scores']['semantic_score'])
-                    method_scores['llm'].append(result['scores']['llm_score'])
-                    
-                    if result['scores']['final_score'] >= 0.4:  # Minimum threshold
-                        matches.append(result)
-                    else:
-                        no_match_reasons.append({
-                            'category': category.get('name', category['id']),
-                            'scores': result['scores'],
-                            'keywords': result.get('matched_keywords', [])
-                        })
-                
-                if matches:
-                    total_matches += 1
-                    logging.info(f"\nFound {len(matches)} matches:")
-                    for match in matches:
-                        relationship_type = "PRIMARY" if match['scores']['final_score'] >= 0.8 else \
-                                         "SECONDARY" if match['scores']['final_score'] >= 0.6 else \
-                                         "RELATED"
-                        match_types[relationship_type] += 1
-                        
-                        category_name = next((c.get('name', c['id']) for c in categories if c['id'] == match['category_id']), match['category_id'])
-                        
-                        logging.info(f"\n  Category: {category_name}")
-                        logging.info(f"  Relationship: {relationship_type}")
-                        logging.info(f"  Scores:")
-                        logging.info(f"    - Final Score: {match['scores']['final_score']:.3f}")
-                        
-                        # Enhanced keyword type reporting
-                        if 'keyword_details' in match:
-                            logging.info("\n  Keyword Matches by Type:")
-                            for ktype, details in match['keyword_details']['type_matches'].items():
-                                if details:
-                                    score = match['keyword_details']['type_scores'][ktype]
-                                    logging.info(f"    - {ktype} (score: {score:.3f}):")
-                                    logging.info(f"      * {', '.join(details)}")
-                        
-                        logging.info(f"\n  Method Scores:")
-                        logging.info(f"    - Keyword Score: {match['scores']['keyword_score']:.3f}")
-                        logging.info(f"    - Semantic Score: {match['scores']['semantic_score']:.3f}")
-                        logging.info(f"    - LLM Score: {match['scores']['llm_score']:.3f}")
-                        
-                        if match.get('llm_suggested_relationship'):
-                            logging.info(f"\n  LLM Suggestion: {match['llm_suggested_relationship']}")
-                            
-                        if args.dry_run:
-                            logging.info(f"\n  [DRY RUN] Would create USES_TECHNOLOGY relationship:")
-                            logging.info(f"    - From: UseCase({use_case['id']})")
-                            logging.info(f"    - To: AICategory({category_name})")
-                            logging.info(f"    - Properties:")
-                            logging.info(f"      * confidence_score: {match['scores']['final_score']}")
-                            logging.info(f"      * relationship_type: {relationship_type}")
-                            logging.info(f"      * match_method: hybrid")
-                            logging.info(f"      * validated: false")
-                else:
-                    match_types['NO_MATCH'] += 1
-                    logging.info("\nNo matches found - Analyzing unmatched case")
-                    
-                    # Log near-miss categories (scores > 0.2 but < 0.4)
-                    near_misses = sorted(
-                        [r for r in no_match_reasons if r['scores']['final_score'] > 0.2],
-                        key=lambda x: x['scores']['final_score'],
-                        reverse=True
-                    )[:3]  # Top 3 near misses
-                    
-                    if near_misses:
-                        logging.info("\nNear Miss Categories:")
-                        for miss in near_misses:
-                            logging.info(f"  - {miss['category']}:")
-                            logging.info(f"    * Final Score: {miss['scores']['final_score']:.3f}")
-                            logging.info(f"    * Keyword Score: {miss['scores']['keyword_score']:.3f}")
-                            logging.info(f"    * Semantic Score: {miss['scores']['semantic_score']:.3f}")
-                            logging.info(f"    * LLM Score: {miss['scores']['llm_score']:.3f}")
-                            if miss['keywords']:
-                                logging.info(f"    * Partial Keyword Matches: {', '.join(miss['keywords'])}")
-                    
-                    # Prepare context for unmatched analysis
-                    context = {
-                        'use_case_text': classifier._prepare_use_case_text(use_case),
-                        'zones': classifier.schema_metadata['zones'],
-                        'capabilities': classifier.schema_metadata['capabilities'],
-                        'patterns': classifier.schema_metadata['patterns']
-                    }
-                    
-                    analysis = classifier.llm_processor.analyze_unmatched_case(**context)
-                    
-                    if args.dry_run:
-                        logging.info("\n  [DRY RUN] Would create UnmatchedAnalysis node:")
-                        logging.info(f"    - Reason: {analysis['reason_category']}")
-                        logging.info(f"    - Analysis: {analysis['detailed_analysis'][:200]}...")
-                        logging.info(f"    - Suggestions: {', '.join(analysis['improvement_suggestions'])}")
-                        logging.info(f"    - Potential New Categories: {', '.join(analysis['potential_new_categories'])}")
-                        logging.info(f"    - Key Technologies: {', '.join(analysis['key_technologies'])}")
-                        logging.info(f"    - Closest Zone: {analysis['closest_zone']}")
-                        logging.info(f"    - Missing Capabilities: {', '.join(analysis['missing_capabilities'])}")
-                    
-            except Exception as e:
-                logging.error(f"Error processing use case {use_case['id']}: {str(e)}")
-                continue
-                
-        if args.dry_run:
-            # Calculate and log statistics
-            processed_cases = len(use_cases)
-            logging.info("\n=== CLASSIFICATION STATISTICS ===")
-            logging.info(f"Total Use Cases Processed: {processed_cases}")
-            logging.info(f"Total Matches Found: {total_matches}")
-            logging.info("\nMatch Type Distribution:")
-            for match_type, count in match_types.items():
-                percentage = (count / processed_cases) * 100
-                logging.info(f"  - {match_type}: {count} ({percentage:.1f}%)")
-                
-            logging.info("\nScoring Method Performance:")
-            for method, scores in method_scores.items():
-                if scores:
-                    avg_score = sum(scores) / len(scores)
-                    above_threshold = sum(1 for s in scores if s >= Config.Scoring.WEIGHTS[method]['threshold'])
-                    threshold_rate = (above_threshold / len(scores)) * 100
-                    logging.info(f"  - {method.capitalize()}:")
-                    logging.info(f"    * Average Score: {avg_score:.3f}")
-                    logging.info(f"    * Above Threshold: {threshold_rate:.1f}%")
-            
-            logging.info("\n=== DRY RUN COMPLETED ===")
-            logging.info("No changes were made to the database")
+        
+        # Initialize classifier
+        classifier = Neo4jClassifier(
+            db_uri=db_uri,
+            db_user=db_user,
+            db_password=db_password,
+            api_key=api_key,
+            dry_run=args.dry_run
+        )
+        
+        # Initialize classifier components
+        await classifier.initialize()
+        
+        # Process use cases
+        if args.all:
+            await classifier.process_all_use_cases()
+        else:
+            await classifier.process_n_use_cases(args.number)
             
         return 0
         
     except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
+        logging.error(f"Error in main: {str(e)}")
         return 1
 
-if __name__ == '__main__':
-    sys.exit(main()) 
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Federal Use Case AI Technology Classifier")
+    parser.add_argument("-n", "--number", type=int, default=1,
+                      help="Number of use cases to process")
+    parser.add_argument("--dry-run", action="store_true",
+                      help="Run without making database changes")
+    parser.add_argument("-a", "--all", action="store_true",
+                      help="Process all unclassified use cases")
+    
+    args = parser.parse_args()
+    
+    # Run classifier
+    exit_code = asyncio.run(main(args))
+    sys.exit(exit_code) 

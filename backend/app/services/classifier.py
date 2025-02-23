@@ -658,7 +658,7 @@ Provide your response in JSON format with the following structure:
         "capabilities": string[]        // Matched capabilities that influenced the decision
     }
 }"""},
-                {"role": "user", "content": f"""
+                {"role": "user", "content": str(f"""
 EVALUATION CRITERIA:
 1. Technical Alignment:
    - Does the use case implementation match the core technical capabilities of any category?
@@ -678,17 +678,52 @@ AVAILABLE AI TECHNOLOGY CATEGORIES:
 
 Analyze this use case and determine if it matches any of the available categories.
 Focus on technical alignment and required capabilities.
-If no strong technical match exists, explain the key technical gaps or misalignments."""}
+If no strong technical match exists, explain the key technical gaps or misalignments.""")}
             ]
 
             # Get LLM analysis
             response = await self.llm_analyzer._call_openai(messages)
             
-            # Extract the best match details
+            # Extract and validate the best match details
             best_match = response.get("best_match", {})
             field_scores = response.get("field_analysis", {})
             matched_terms = response.get("matched_terms", {})
             
+            # Ensure field scores are floats
+            field_scores = {
+                "technical_alignment": float(field_scores.get("technical_alignment", 0.0)),
+                "business_alignment": float(field_scores.get("business_alignment", 0.0)),
+                "implementation_fit": float(field_scores.get("implementation_fit", 0.0))
+            }
+            
+            # Process matched terms
+            technical_terms = []
+            capabilities = []
+
+            # Handle technical terms
+            raw_technical_terms = matched_terms.get('technical_terms', [])
+            if isinstance(raw_technical_terms, (str, dict)):
+                raw_technical_terms = [raw_technical_terms]
+            
+            for term in raw_technical_terms:
+                if isinstance(term, dict):
+                    term_value = term.get('name') or term.get('value') or str(term)
+                    technical_terms.append(str(term_value))
+                else:
+                    technical_terms.append(str(term))
+
+            # Handle capabilities
+            raw_capabilities = matched_terms.get('capabilities', [])
+            if isinstance(raw_capabilities, (str, dict)):
+                raw_capabilities = [raw_capabilities]
+            
+            for cap in raw_capabilities:
+                if isinstance(cap, dict):
+                    cap_value = cap.get('name') or cap.get('value') or str(cap)
+                    capabilities.append(str(cap_value))
+                else:
+                    capabilities.append(str(cap))
+
             # Calculate overall LLM score as weighted average of field scores
             weights = {
                 "technical_alignment": 0.5,    # Increased weight for technical alignment
@@ -704,11 +739,11 @@ If no strong technical match exists, explain the key technical gaps or misalignm
             # Apply term match boost
             term_match_boost = 0.0
             if matched_terms:
-                technical_terms = len(matched_terms.get("technical_terms", []))
-                capabilities = len(matched_terms.get("capabilities", []))
+                technical_terms_count = len(technical_terms)
+                capabilities_count = len(capabilities)
                 
                 # Add 10% boost for each technical term up to 30%
-                term_match_boost = min(0.3, (technical_terms + capabilities) * 0.1)
+                term_match_boost = min(0.3, (technical_terms_count + capabilities_count) * 0.1)
                 
             llm_score = min(1.0, llm_score * (1 + term_match_boost))
             
@@ -719,8 +754,8 @@ If no strong technical match exists, explain the key technical gaps or misalignm
                 'llm_explanation': best_match.get("explanation", ""),
                 'field_match_scores': field_scores,
                 'matched_terms': {
-                    'technical_terms': matched_terms.get('technical_terms', []),
-                    'capabilities': matched_terms.get('capabilities', [])
+                    'technical_terms': technical_terms,
+                    'capabilities': capabilities
                 }
             }
             
@@ -728,7 +763,14 @@ If no strong technical match exists, explain the key technical gaps or misalignm
             self.logger.error(f"Error in LLM analysis: {str(e)}")
             return {
                 'llm_score': 0.0,
-                'llm_explanation': f"Error during LLM analysis: {str(e)}"
+                'category_name': None,
+                'match_type': "ERROR",
+                'llm_explanation': f"Error during LLM analysis: {str(e)}",
+                'field_match_scores': {},
+                'matched_terms': {
+                    'technical_terms': [],
+                    'capabilities': []
+                }
             }
 
     def _format_use_case_text(self, use_case: Dict[str, Any]) -> str:

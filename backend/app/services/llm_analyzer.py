@@ -1,715 +1,373 @@
 """
-LLM Analyzer Service for AI Technology Classification
-
-This service uses LLM to:
-1. Verify potential matches between use cases and AI categories
-2. Analyze cases where no match was found
-3. Suggest improvements to classification system
+Dell-AITC LLM Analyzer Service
+Handles LLM-based analysis for AI technology classification using Ollama.
 """
 
-import json
 import logging
-from typing import Dict, List, Optional, Tuple, Any
-import os
-from dotenv import load_dotenv
-from pathlib import Path
+from typing import Dict, Any, List, Optional
 import httpx
-from ..config import get_settings
+import json
+from datetime import datetime
+import uuid
 from neo4j import AsyncGraphDatabase
-import asyncio
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
-# Define official categories
-OFFICIAL_CATEGORIES = [
-    "AI Development & Operations (AIOps)",
-    "Computer Vision & Media Analysis",
-    "Cybersecurity & Threat Detection",
-    "Data Integration & Management",
-    "Decision Support & Optimization",
-    "Edge AI & IoT",
-    "Environmental & Geospatial AI",
-    "Healthcare & Biotech AI",
-    "Intelligent End-User Computing",
-    "Multimodal AI Systems",
-    "Natural Language Processing (NLP)",
-    "Predictive & Pattern Analytics",
-    "Process Automation & Robotics",
-    "Responsible AI Systems"
-]
-
 class LLMAnalyzer:
-    """Handles LLM-based analysis for AI technology classification."""
+    """LLM-based analyzer for AI technology classification using Ollama"""
     
-    def __init__(self):
-        """Initialize with configuration."""
-        self.settings = get_settings()
-        self.neo4j_driver = None
-        self.openai_client = None
-        self.category_definitions = {}
-        
-        # Get retry and timeout settings from config
-        self.max_retries = self.settings.openai_max_retries
-        self.retry_delays = self.settings.openai_retry_delays
-        self.api_timeout = self.settings.openai_timeout
+    def __init__(self, model: str = "phi4:latest", base_url: str = "http://localhost:11434"):
+        """Initialize LLM analyzer"""
+        self.client = None
+        self.categories = {}
+        self.base_url = base_url
+        self.model = model
         
     async def initialize(self):
-        """Initialize connections and load category definitions."""
-        # Initialize Neo4j connection
-        self.neo4j_driver = AsyncGraphDatabase.driver(
-            self.settings.neo4j_uri,
-            auth=(self.settings.neo4j_user, self.settings.neo4j_password)
+        """Initialize Ollama client"""
+        # Initialize httpx client for Ollama
+        self.client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=120.0
         )
-        
-        # Initialize OpenAI client with configured timeout
-        self.openai_client = httpx.AsyncClient(
-            base_url="https://api.openai.com/v1",
-            headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
-            timeout=self.api_timeout
-        )
-        
-        # Load category definitions
-        await self._load_category_definitions()
+        logger.info(f"Initialized Ollama client with base URL: {self.base_url}")
         
     async def cleanup(self):
-        """Cleanup connections and resources."""
-        if self.neo4j_driver:
-            await self.neo4j_driver.close()
-        if self.openai_client:
-            await self.openai_client.aclose()
-        
-    async def _load_category_definitions(self):
-        """Load AI technology category definitions from Neo4j."""
+        """Cleanup resources"""
+        if self.client:
+            await self.client.aclose()
+
+    async def _cleanup_existing_classifications(self, use_case_id: str, session) -> None:
+        """Remove existing classifications for a use case before adding new ones."""
         try:
-            if not self.neo4j_driver:
-                raise ValueError("Error: Neo4j connection not available")
-                
-            async with self.neo4j_driver.session() as session:
-                query = """
-                MATCH (c:AICategory)
-                WHERE c.status = 'active'
-                OPTIONAL MATCH (c)-[r1:HAS_KEYWORD]->(k1:Keyword)
-                WHERE r1.type = 'technical'
-                WITH c, collect(DISTINCT k1.name) as keywords
-                OPTIONAL MATCH (c)-[r2:HAS_KEYWORD]->(k2:Keyword)
-                WHERE r2.type = 'capability'
-                WITH c, keywords, collect(DISTINCT k2.name) as capabilities
-                OPTIONAL MATCH (c)-[r3:HAS_KEYWORD]->(k3:Keyword)
-                WHERE r3.type = 'business_term'
-                WITH c, keywords, capabilities, collect(DISTINCT k3.name) as business_terms
-                OPTIONAL MATCH (c)-[:BELONGS_TO]->(z:Zone)
-                RETURN {
-                    name: c.name,
-                    definition: c.category_definition,
-                    keywords: keywords,
-                    capabilities: capabilities,
-                    business_language: business_terms,
-                    maturity_level: c.maturity_level,
-                    zone: z.name
-                } as category
-                """
-                result = await session.run(query)
-                async for record in result:
-                    category = record["category"]
-                    self.category_definitions[category["name"]] = category
+            # Delete existing CLASSIFIED_AS relationships
+            await session.run("""
+            MATCH (u:UseCase {id: $use_case_id})-[r:CLASSIFIED_AS]->()
+            DELETE r
+            """, {"use_case_id": use_case_id})
+            
+            # Delete existing NoMatchAnalysis nodes and relationships
+            await session.run("""
+            MATCH (u:UseCase {id: $use_case_id})-[r:HAS_ANALYSIS]->(n:NoMatchAnalysis)
+            DELETE r, n
+            """, {"use_case_id": use_case_id})
+            
+            logger.info(f"Cleaned up existing classifications for use case {use_case_id}")
         except Exception as e:
-            raise RuntimeError(f"Error: Neo4j database error - {str(e)}")
-        
-    async def _call_openai(self, messages: List[Dict[str, str]]) -> Dict:
-        """
-        Call OpenAI API with improved error handling and retries.
-        Uses exponential backoff for retries.
-        
-        Args:
-            messages: List of message dictionaries for the chat completion
+            logger.error(f"Error cleaning up existing classifications: {str(e)}")
+            raise
             
-        Returns:
-            Properly formatted response dict with all required fields
-        """
-        last_error = None
-        
-        for retry_attempt in range(self.max_retries):
-            try:
-                response = await self.openai_client.post(
-                    "/chat/completions",
-                    json={
-                        "model": self.settings.openai_model or "gpt-4",
-                        "messages": messages,
-                        "temperature": 0.3,
-                        "response_format": { "type": "json_object" }
-                    }
-                )
-                response.raise_for_status()
-                
-                # Parse response and ensure it's valid JSON
-                try:
-                    result = json.loads(response.json()["choices"][0]["message"]["content"])
-                    return self._validate_openai_response(result)
-                except (json.JSONDecodeError, KeyError) as e:
-                    last_error = f"Failed to parse OpenAI response: {str(e)}"
-                    logger.warning(f"Attempt {retry_attempt + 1}: {last_error}")
-                    
-            except (httpx.TimeoutException, httpx.ReadTimeout) as e:
-                last_error = f"OpenAI API timeout: {str(e)}"
-                logger.warning(f"Attempt {retry_attempt + 1}: {last_error}")
-                
-            except Exception as e:
-                last_error = f"OpenAI API error: {str(e)}"
-                logger.warning(f"Attempt {retry_attempt + 1}: {last_error}")
-            
-            # Don't sleep after the last attempt
-            if retry_attempt < self.max_retries - 1:
-                delay = self.retry_delays[retry_attempt]
-                logger.info(f"Retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
-        
-        # If we get here, all retries failed
-        logger.error(f"All {self.max_retries} attempts failed. Last error: {last_error}")
-        return self._get_default_response(f"Error after {self.max_retries} attempts: {last_error}")
-    
-    def _validate_openai_response(self, result: Dict) -> Dict:
-        """Validate and format OpenAI API response."""
-        return {
-            "best_match": {
-                "category_name": str(result.get("best_match", {}).get("category_name", "")),
-                "confidence": float(result.get("best_match", {}).get("confidence", 0.0)),
-                "match_type": str(result.get("best_match", {}).get("match_type", "NONE")),
-                "reasoning": str(result.get("best_match", {}).get("reasoning", "No reasoning provided"))
-            },
-            "field_analysis": {
-                "technical_alignment": float(result.get("field_analysis", {}).get("technical_alignment", 0.0)),
-                "business_alignment": float(result.get("field_analysis", {}).get("business_alignment", 0.0)),
-                "implementation_fit": float(result.get("field_analysis", {}).get("implementation_fit", 0.0)),
-                "capability_coverage": float(result.get("field_analysis", {}).get("capability_coverage", 0.0)),
-                "maturity_alignment": float(result.get("field_analysis", {}).get("maturity_alignment", 0.0))
-            },
-            "matched_terms": {
-                "technical_terms": list(result.get("matched_terms", {}).get("technical_terms", [])),
-                "business_terms": list(result.get("matched_terms", {}).get("business_terms", [])),
-                "capabilities": list(result.get("matched_terms", {}).get("capabilities", []))
-            },
-            "alternative_matches": list(result.get("alternative_matches", []))
-        }
-
-    def _get_default_response(self, error_message: str) -> Dict:
-        """Get a default response with all required fields."""
-        return {
-            "best_match": {
-                "category_name": "",
-                "confidence": 0.0,
-                "match_type": "NONE",
-                "reasoning": error_message
-            },
-            "field_analysis": {
-                "technical_alignment": 0.0,
-                "business_alignment": 0.0,
-                "implementation_fit": 0.0,
-                "capability_coverage": 0.0,
-                "maturity_alignment": 0.0
-            },
-            "matched_terms": {
-                "technical_terms": [],
-                "business_terms": [],
-                "capabilities": []
-            },
-            "alternative_matches": []
-        }
-
-    async def verify_match(
-        self,
-        use_case_text: str,
-        category_name: str,
-        match_type: str,
-        confidence: float
-    ) -> Dict:
-        """
-        Verify a potential match between a use case and an AI technology category.
-        """
-        # Validate category exists and is official
-        if category_name not in self.category_definitions:
-            raise ValueError(f"Unknown category: {category_name}")
-        if category_name not in OFFICIAL_CATEGORIES:
-            raise ValueError(f"Category {category_name} is not in the official list of categories")
-            
-        # Validate match type
-        valid_match_types = ["PRIMARY", "SUPPORTING", "RELATED", "NONE"]
-        if match_type not in valid_match_types:
-            raise ValueError(f"Invalid match type: {match_type}. Must be one of {valid_match_types}")
-            
-        # Get category details
-        category = self.category_definitions[category_name]
-        
-        # Safely get list properties with defaults
-        keywords = category.get('keywords', [])
-        if keywords is None:
-            keywords = []
-        elif isinstance(keywords, str):
-            keywords = [keywords]
-            
-        capabilities = category.get('capabilities', [])
-        if capabilities is None:
-            capabilities = []
-        elif isinstance(capabilities, str):
-            capabilities = [capabilities]
-            
-        business_terms = category.get('business_language', [])
-        if business_terms is None:
-            business_terms = []
-        elif isinstance(business_terms, str):
-            business_terms = [business_terms]
-        
-        # Build enhanced prompt with official categories context
-        messages = [
-            {"role": "system", "content": f"""You are an expert AI technology analyst evaluating federal use cases against our official AI technology categories:
-
-{chr(10).join(f'- {cat}' for cat in OFFICIAL_CATEGORIES)}
-
-Your task is to verify if this use case truly matches the specified category based on detailed analysis.
-Only validate matches against these official categories.
-
-Provide your response in JSON format with the following structure:
-{{
-    "agrees": boolean,                // Whether you agree with the match
-    "confidence": float,              // Your confidence in the assessment (0.0-1.0)
-    "match_type": string,             // "PRIMARY", "SUPPORTING", "RELATED", or "NONE"
-    "reasoning": string,              // Your detailed reasoning
-    "field_match_scores": {{
-        "technical_alignment": float,  // How well technical aspects align
-        "business_alignment": float,   // How well business objectives align
-        "implementation_fit": float,   // How well implementation approach fits
-        "capability_coverage": float,  // How many required capabilities are covered
-        "maturity_alignment": float,   // How well maturity levels align
-        "semantic_relevance": float,   // Semantic similarity of descriptions
-        "keyword_relevance": float,    // Relevance of matched keywords
-        "context_alignment": float     // Overall context alignment
-    }},
-    "term_match_details": {{
-        "matched_keywords": [],       // Technical keywords found in context
-        "matched_capabilities": [],   // Capabilities demonstrated
-        "matched_business_terms": [], // Business terms found in context
-        "context_matches": [],        // Other relevant contextual matches
-        "semantic_concepts": {{
-            "technical_concepts": [
-                {{
-                    "concept": string,     // Technical concept identified
-                    "relevance": float,    // Relevance score
-                    "evidence": string     // Evidence from text
-                }}
-            ],
-            "business_concepts": [
-                {{
-                    "concept": string,     // Business concept identified
-                    "relevance": float,    // Relevance score
-                    "evidence": string     // Evidence from text
-                }}
-            ]
-        }}
-    }},
-    "improvement_notes": [],          // Notes for improving the match
-    "suggestions": []                 // Suggestions for classification system
-}}"""
-            },
-            {"role": "user", "content": f"""
-EVALUATION CRITERIA:
-1. Technical Alignment:
-   - Does the use case implementation align with the category's core capabilities?
-   - Are the required technical components present?
-   - Do the outputs match expected category outcomes?
-
-2. Business Alignment:
-   - Does the use case purpose align with the category's business objectives?
-   - Are the benefits consistent with category capabilities?
-   - Is the maturity level appropriate?
-
-3. Implementation Context:
-   - Is the development approach consistent with the category?
-   - Does the system architecture fit the category pattern?
-   - Are there any technical conflicts or misalignments?
-
-USE CASE DETAILS:
-{use_case_text}
-
-TECHNOLOGY CATEGORY DETAILS:
-Name: {category['name']}
-Definition: {category.get('definition', 'No definition available')}
-Zone: {category.get('zone', 'Unknown')}
-Maturity Level: {category.get('maturity_level', 'Unknown')}
-
-Technical Keywords (Must be contextually relevant):
-{', '.join(keywords)}
-
-Core Capabilities (Should be demonstrated):
-{', '.join(capabilities)}
-
-Business/Domain Language (Should align):
-{', '.join(business_terms)}
-
-Current match_type: {match_type}
-Initial confidence: {confidence}
-
-Analyze this match and provide your assessment in the specified JSON format."""}
-        ]
-        
-        # Get LLM analysis
-        llm_result = await self._call_openai(messages)
-        
-        # Convert to AIClassification compatible format with enhanced scoring
-        classification_data = {
-            "match_type": llm_result["best_match"]["match_type"],
-            "confidence": llm_result["best_match"]["confidence"],
-            "analysis_method": "LLM",
-            "analysis_version": "v2.2",
-            "llm_verification": llm_result["agrees"],
-            "llm_confidence": llm_result["best_match"]["confidence"],
-            "llm_reasoning": llm_result["best_match"]["reasoning"],
-            "field_match_scores": {
-                **llm_result["field_analysis"],
-                "semantic_relevance": llm_result["field_analysis"].get("semantic_relevance", 0.0),
-                "keyword_relevance": llm_result["field_analysis"].get("keyword_relevance", 0.0),
-                "context_alignment": llm_result["field_analysis"].get("context_alignment", 0.0)
-            },
-            "term_match_details": {
-                **llm_result["matched_terms"],
-                "semantic_concepts": llm_result["matched_terms"].get("semantic_concepts", {
-                    "technical_concepts": [],
-                    "business_concepts": []
-                })
-            },
-            "matched_keywords": llm_result["matched_terms"]["technical_terms"],
-            "llm_suggestions": llm_result["alternative_matches"],
-            "improvement_notes": llm_result["improvement_notes"],
-            "false_positive": not llm_result["agrees"] and confidence > 0.3,
-            "manual_override": False,
-            "review_status": "PENDING"
-        }
-        
-        return classification_data
-
-    async def analyze_no_match(self, use_case_text: str, current_category: Optional[str] = None) -> Dict[str, Any]:
-        """Analyze why a use case doesn't match any categories."""
+    async def analyze_use_case(self, use_case: Dict[str, Any], categories: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze a use case and determine matching AI technology categories."""
         try:
-            if not use_case_text:
-                return {
-                    "reason": "Error: Empty use case text provided",
-                    "reason_category": "UNCLEAR_DESC",
-                    "confidence": 0.0,
-                    "suggestions": []
-                }
+            # Create the classification prompt
+            prompt = self._create_classification_prompt(use_case, categories)
+            
+            logger.info(f"Making request to Ollama API with model {self.model}")
+            
+            # Get LLM analysis using Ollama
+            request_data = {
+                "model": self.model,
+                "prompt": f"""You are an expert AI technology classifier for federal use cases.
+Your task is to analyze federal use cases and match them to the most appropriate AI technology categories
+based on technical alignment, capabilities, and implementation patterns.
 
-            # Build prompt with official categories and emerging technology guidance
-            messages = [
-                {"role": "system", "content": """You are an expert AI technology analyst evaluating federal use cases.
-Your task is to:
-1. Determine if the use case matches any of our official AI technology categories
-2. If no match, analyze whether this represents an emerging technology pattern
+{prompt}
 
-Official AI Technology Categories:
-{}
-
-Provide your response in JSON format with the following structure:
-{{
-    "matches_existing": boolean,     // Whether it matches an existing category
-    "closest_category": string,      // Name of closest official category if any
-    "confidence": float,             // Confidence in the analysis (0.0-1.0)
-    "reason": string,                // Primary reason for no match
-    "reason_category": string,       // UNCLEAR_DESC, MISSING_INFO, EMERGING_TECH, TECH_MISMATCH, SCOPE_MISMATCH
-    "emerging_pattern": {{           // Only if reason_category is EMERGING_TECH
-        "pattern_name": string,      // Suggested name for new category
-        "description": string,       // Description of the emerging pattern
-        "similar_cases": string[],   // Examples of similar use cases
-        "key_technologies": string[], // Core technologies involved
-        "differentiation": string,   // How it differs from existing categories
-        "market_evidence": string    // Evidence of this being an emerging trend
-    }},
-    "improvement_suggestions": {{
-        "description": string[],     // Suggestions for description clarity
-        "technical_detail": string[],// Technical details to add
-        "scope": string[],          // Scope clarification needed
-        "categorization": string[]   // Suggestions for better categorization
-    }}
-}}""".format('\n'.join(f"- {cat}" for cat in OFFICIAL_CATEGORIES))},
-                {"role": "user", "content": f"""Analyze this use case and determine if it:
-1. Matches any of our official categories (even partially)
-2. Represents an emerging technology pattern
-3. Needs more information for proper classification
-
-Use Case:
-{use_case_text}"""}
-            ]
-
-            response = await self.openai_client.post(
-                "/chat/completions",
-                json={
-                    "model": self.settings.openai_model or "gpt-4",
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "response_format": { "type": "json_object" }
-                }
-            )
+Remember to respond ONLY with valid JSON matching the format specified in the prompt.""",
+                "stream": False
+            }
+            logger.debug(f"Request data: {json.dumps(request_data, indent=2)}")
+            
+            response = await self.client.post("api/generate", json=request_data)
             response.raise_for_status()
             
+            # Parse response
+            result = response.json()
+            logger.debug(f"Raw Ollama response: {json.dumps(result, indent=2)}")
+            
+            # Extract the response text and parse as JSON
             try:
-                result = json.loads(response.json()["choices"][0]["message"]["content"])
-                return {
-                    "matches_existing": result.get("matches_existing", False),
-                    "closest_category": result.get("closest_category"),
-                    "confidence": float(result.get("confidence", 0.0)),
-                    "reason": result.get("reason", "Unknown reason"),
-                    "reason_category": result.get("reason_category", "OTHER"),
-                    "emerging_pattern": result.get("emerging_pattern") if result.get("reason_category") == "EMERGING_TECH" else None,
-                    "improvement_suggestions": result.get("improvement_suggestions", {
-                        "description": [],
-                        "technical_detail": [],
-                        "scope": [],
-                        "categorization": []
-                    })
-                }
-            except Exception as e:
-                return {
-                    "reason": f"Error: Failed to parse OpenAI response - {str(e)}",
-                    "reason_category": "OTHER",
-                    "confidence": 0.0,
-                    "suggestions": []
-                }
+                response_text = result["response"]
+                # Handle markdown code blocks
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1]
+                if "```" in response_text:
+                    response_text = response_text.split("```")[0]
+                response_text = response_text.strip()
                 
-        except httpx.TimeoutException:
-            return {
-                "reason": "Error: Request to OpenAI timed out",
-                "reason_category": "OTHER",
-                "confidence": 0.0,
-                "suggestions": []
-            }
-        except Exception as e:
-            return {
-                "reason": f"Error: {str(e)}",
-                "reason_category": "OTHER",
-                "confidence": 0.0,
-                "suggestions": []
-            }
-
-    async def suggest_improvements(
-        self,
-        category_name: str,
-        recent_matches: List[Dict],
-        recent_failures: List[Dict]
-    ) -> Dict:
-        """
-        Analyze classification patterns and suggest improvements to an AI technology category
-        based on real-world usage data.
-        """
-        if category_name not in self.category_definitions:
-            raise ValueError(f"Unknown category: {category_name}")
-            
-        category = self.category_definitions[category_name]
-        
-        # Safely get list properties with defaults
-        keywords = category.get('keywords', [])
-        if keywords is None:
-            keywords = []
-        elif isinstance(keywords, str):
-            keywords = [keywords]
-            
-        capabilities = category.get('capabilities', [])
-        if capabilities is None:
-            capabilities = []
-        elif isinstance(capabilities, str):
-            capabilities = [capabilities]
-            
-        business_terms = category.get('business_language', [])
-        if business_terms is None:
-            business_terms = []
-        elif isinstance(business_terms, str):
-            business_terms = [business_terms]
-
-        # Enhanced prompt for category improvement analysis
-        messages = [
-            {"role": "system", "content": """You are an expert AI technology analyst tasked with optimizing our AI technology classification framework.
-Your goal is to analyze real-world classification patterns and suggest improvements to make this category more accurate and useful.
-
-Provide your response in JSON format with the following structure:
-{
-    "definition_updates": {
-        "current": string,           // Current category definition
-        "suggested": string,         // Suggested updated definition
-        "reasoning": string,         // Reasoning for changes
-        "impact_analysis": {
-            "clarity": string,       // Impact on definition clarity
-            "coverage": string,      // Impact on use case coverage
-            "precision": string      // Impact on classification precision
-        }
-    },
-    "keyword_updates": {
-        "add": string[],            // Keywords to add
-        "remove": string[],         // Keywords to remove
-        "modify": string[],         // Keywords to modify
-        "reasoning": string         // Reasoning for changes
-    },
-    "capability_updates": {
-        "add": string[],           // Capabilities to add
-        "remove": string[],        // Capabilities to remove
-        "modify": string[],        // Capabilities to modify
-        "reasoning": string        // Reasoning for changes
-    },
-    "business_term_updates": {
-        "add": string[],           // Business terms to add
-        "remove": string[],        // Business terms to remove
-        "context_improvements": string[], // Context improvements
-        "reasoning": string        // Reasoning for changes
-    },
-    "match_criteria_updates": {
-        "threshold_adjustments": {
-            "confidence": float,    // Suggested confidence threshold
-            "keyword_weight": float, // Suggested keyword weight
-            "semantic_weight": float // Suggested semantic weight
-        },
-        "scoring_weights": {
-            "technical": float,     // Technical alignment weight
-            "business": float,      // Business alignment weight
-            "context": float        // Context relevance weight
-        },
-        "reasoning": string,       // Reasoning for adjustments
-        "expected_impact": {
-            "false_positives": string, // Impact on false positives
-            "false_negatives": string, // Impact on false negatives
-            "overall_accuracy": string  // Impact on overall accuracy
-        }
-    }
-}"""},
-            {"role": "user", "content": f"""
-CATEGORY DETAILS:
-Name: {category.get('name', 'Unknown')}
-Definition: {category.get('definition', 'No definition available')}
-Technical Keywords: {', '.join(keywords)}
-Core Capabilities: {', '.join(capabilities)}
-Business Terms: {', '.join(business_terms)}
-Zone: {category.get('zone', 'Unknown')}
-Maturity Level: {category.get('maturity_level', 'Unknown')}
-
-CLASSIFICATION HISTORY:
-Successful Matches:
-{json.dumps(recent_matches, indent=2)}
-
-Failed Matches:
-{json.dumps(recent_failures, indent=2)}
-
-Analyze this category and suggest improvements in the specified JSON format."""}
-        ]
-
-        try:
-            # Get LLM analysis
-            response = await self._call_openai(messages)
-            if not response or not isinstance(response, dict):
-                logger.error("Invalid response from OpenAI")
-                return self._get_default_improvement_response(category)
-
-            # Ensure all required sections exist with proper structure
-            result = {
-                "definition_updates": {
-                    "current": category.get('definition', 'No definition available'),
-                    "suggested": response.get("definition_updates", {}).get("suggested", "No suggestions available"),
-                    "reasoning": response.get("definition_updates", {}).get("reasoning", "No reasoning provided"),
-                    "impact_analysis": response.get("definition_updates", {}).get("impact_analysis", {
-                        "clarity": "No analysis available",
-                        "coverage": "No analysis available",
-                        "precision": "No analysis available"
-                    })
-                },
-                "keyword_updates": response.get("keyword_updates", {
-                    "add": [],
-                    "remove": [],
-                    "modify": [],
-                    "reasoning": "No keyword analysis available"
-                }),
-                "capability_updates": response.get("capability_updates", {
-                    "add": [],
-                    "remove": [],
-                    "modify": [],
-                    "reasoning": "No capability analysis available"
-                }),
-                "business_term_updates": response.get("business_term_updates", {
-                    "add": [],
-                    "remove": [],
-                    "context_improvements": [],
-                    "reasoning": "No business term analysis available"
-                }),
-                "match_criteria_updates": response.get("match_criteria_updates", {
-                    "threshold_adjustments": {
-                        "confidence": 0.5,
-                        "keyword_weight": 0.33,
-                        "semantic_weight": 0.33
-                    },
-                    "scoring_weights": {
-                        "technical": 0.4,
-                        "business": 0.3,
-                        "context": 0.3
-                    },
-                    "reasoning": "No criteria analysis available",
-                    "expected_impact": {
-                        "false_positives": "Unknown",
-                        "false_negatives": "Unknown",
-                        "overall_accuracy": "Unknown"
+                result = json.loads(response_text)
+            except (KeyError, json.JSONDecodeError) as e:
+                logger.error(f"Failed to parse Ollama response: {str(e)}")
+                logger.error(f"Raw response: {result}")
+                logger.error(f"Extracted text: {response_text if 'response_text' in locals() else 'N/A'}")
+                return {
+                    "error": "Failed to parse response",
+                    "analyzed_at": datetime.now().isoformat(),
+                    "use_case_id": use_case.get("id", "unknown"),
+                    "no_match_analysis": {
+                        "reason": "Failed to parse LLM response",
+                        "technical_gaps": [],
+                        "suggested_focus": "Analysis could not be completed due to response parsing error"
                     }
-                })
-            }
-
+                }
+            
+            # Add metadata
+            result["analyzed_at"] = datetime.now().isoformat()
+            result["use_case_id"] = use_case.get("id", "unknown")
+            
             return result
+            
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error to Ollama API: {str(e)}")
+            return {
+                "error": f"Connection error: {str(e)}",
+                "analyzed_at": datetime.now().isoformat(),
+                "use_case_id": use_case.get("id", "unknown"),
+                "no_match_analysis": {
+                    "reason": f"Connection failed: {str(e)}",
+                    "technical_gaps": [],
+                    "suggested_focus": "Analysis could not be completed due to connection error"
+                }
+            }
+            
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout error: {str(e)}")
+            return {
+                "error": f"Timeout error: {str(e)}",
+                "analyzed_at": datetime.now().isoformat(),
+                "use_case_id": use_case.get("id", "unknown"),
+                "no_match_analysis": {
+                    "reason": f"Request timed out: {str(e)}",
+                    "technical_gaps": [],
+                    "suggested_focus": "Analysis could not be completed due to timeout"
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in LLM analysis: {str(e)}", exc_info=True)
+            return {
+                "error": f"Error in LLM analysis: {str(e)}",
+                "analyzed_at": datetime.now().isoformat(),
+                "use_case_id": use_case.get("id", "unknown"),
+                "no_match_analysis": {
+                    "reason": f"Analysis failed: {str(e)}",
+                    "technical_gaps": [],
+                    "suggested_focus": "Analysis could not be completed due to unexpected error"
+                }
+            }
+            
+    def _create_classification_prompt(self, use_case: Dict[str, Any], categories: List[Dict[str, Any]]) -> str:
+        """Create a detailed prompt for classification analysis."""
+        
+        # Format use case details
+        use_case_text = f"""Use Case Details:
+Name: {use_case.get('name', 'Untitled')}
+Description: {use_case.get('description', 'No description')}
+Purpose & Benefits: {use_case.get('purpose_benefits', 'Not specified')}
+Outputs: {use_case.get('outputs', 'Not specified')}
+Development Stage: {use_case.get('dev_stage', 'Unknown')}
+Development Method: {use_case.get('dev_method', 'Unknown')}"""
+
+        # Format categories with their details
+        categories_text = "Available AI Technology Categories:\n\n"
+        for idx, cat in enumerate(categories, 1):
+            categories_text += f"""Category {idx}: {cat.get('name', 'Unnamed')}
+Definition: {cat.get('category_definition', 'No definition')}
+Zone: {cat.get('zone', 'Unassigned')}
+Maturity Level: {cat.get('maturity_level', 'Unknown')}
+Technical Keywords: {', '.join(cat.get('keywords', []))}
+Core Capabilities: {', '.join(cat.get('capabilities', []))}
+"""
+
+        # Create the full prompt
+        return f"""{use_case_text}
+
+{categories_text}
+
+Analyze this federal use case and determine the most appropriate AI technology category matches.
+
+Provide your analysis in JSON format:
+{{
+    "primary_match": {{
+        "category": string,  // Name of the single best matching category
+        "confidence": float,  // Between 0.0-1.0
+        "reasoning": string  // 2-3 sentences explaining the match, including:
+                           // 1. Technical alignment with category definition
+                           // 2. Specific capabilities that match
+                           // 3. Implementation considerations
+    }},
+    "supporting_matches": [
+        {{
+            "category": string,
+            "confidence": float,
+            "reasoning": string  // 2-3 sentences explaining:
+                               // 1. How this complements the primary category
+                               // 2. Specific technical integration points
+                               // 3. Additional capabilities provided
+        }}
+    ],
+    "related_matches": [
+        {{
+            "category": string,
+            "confidence": float,
+            "reasoning": string  // 1-2 sentences explaining:
+                               // 1. Tangential relevance to solution
+                               // 2. Potential future integration points
+        }}
+    ],
+    "no_match_analysis": {{  // Only if no good matches found
+        "reason": string,  // 2-3 sentences explaining why no categories match well
+        "technical_gaps": [string],  // List specific technical capabilities missing
+        "suggested_focus": string  // 1-2 sentences suggesting technical direction
+    }}
+}}
+
+Classification Guidelines:
+1. Primary Match (Required if any good match exists):
+   - Must be the SINGLE most appropriate category
+   - Should have confidence > 0.8
+   - Must align with core technical requirements
+   - Provide specific technical justification with examples from use case
+
+2. Supporting Matches (Optional, up to 2):
+   - Categories that complement the primary category
+   - Should have confidence > 0.6
+   - Explain specific technical integration points
+   - Detail how they enhance the primary category's capabilities
+
+3. Related Matches (Optional):
+   - Categories with tangential relevance
+   - Should have confidence > 0.4
+   - Explain potential technical synergies
+   - Note specific future integration possibilities
+
+4. No Match Analysis (Required if no primary match):
+   - Explain specific technical gaps
+   - List missing capabilities
+   - Suggest concrete technical focus areas
+   - Note any partial matches
+
+Analysis Focus:
+- Technical alignment with category definitions
+- Required capabilities and components
+- Implementation patterns and maturity
+- Integration requirements
+- Development stage compatibility
+
+For each match, ensure reasoning:
+1. References specific aspects of the use case
+2. Cites relevant technical capabilities
+3. Considers implementation context
+4. Explains technical integration points
+5. Notes any important caveats or considerations""" 
+
+    async def save_classification_results(self, use_case_id: str, results: Dict[str, Any], driver) -> None:
+        """Save classification results to Neo4j.
+        
+        Args:
+            use_case_id: ID of the use case being classified
+            results: Classification results from analyze_use_case
+            driver: Neo4j driver instance
+        """
+        try:
+            async with driver.session() as session:
+                # First cleanup existing classifications
+                await self._cleanup_existing_classifications(use_case_id, session)
+                
+                # Handle primary match
+                if primary := results.get("primary_match"):
+                    await session.run("""
+                    MATCH (u:UseCase {id: $use_case_id})
+                    MATCH (c:AICategory {name: $category_name})
+                    CREATE (u)-[r:CLASSIFIED_AS {
+                        id: $classification_id,
+                        match_type: 'PRIMARY',
+                        confidence: $confidence,
+                        reasoning: $reasoning,
+                        classified_at: $timestamp,
+                        classified_by: 'LLM_ANALYZER',
+                        analysis_method: 'LLM'
+                    }]->(c)
+                    """, {
+                        "use_case_id": use_case_id,
+                        "category_name": primary["category"],
+                        "classification_id": str(uuid.uuid4()),
+                        "confidence": primary["confidence"],
+                        "reasoning": primary["reasoning"],
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Handle supporting matches
+                for match in results.get("supporting_matches", []):
+                    await session.run("""
+                    MATCH (u:UseCase {id: $use_case_id})
+                    MATCH (c:AICategory {name: $category_name})
+                    CREATE (u)-[r:CLASSIFIED_AS {
+                        id: $classification_id,
+                        match_type: 'SUPPORTING',
+                        confidence: $confidence,
+                        reasoning: $reasoning,
+                        classified_at: $timestamp,
+                        classified_by: 'LLM_ANALYZER',
+                        analysis_method: 'LLM'
+                    }]->(c)
+                    """, {
+                        "use_case_id": use_case_id,
+                        "category_name": match["category"],
+                        "classification_id": str(uuid.uuid4()),
+                        "confidence": match["confidence"],
+                        "reasoning": match["reasoning"],
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Handle related matches
+                for match in results.get("related_matches", []):
+                    await session.run("""
+                    MATCH (u:UseCase {id: $use_case_id})
+                    MATCH (c:AICategory {name: $category_name})
+                    CREATE (u)-[r:CLASSIFIED_AS {
+                        id: $classification_id,
+                        match_type: 'RELATED',
+                        confidence: $confidence,
+                        reasoning: $reasoning,
+                        classified_at: $timestamp,
+                        classified_by: 'LLM_ANALYZER',
+                        analysis_method: 'LLM'
+                    }]->(c)
+                    """, {
+                        "use_case_id": use_case_id,
+                        "category_name": match["category"],
+                        "classification_id": str(uuid.uuid4()),
+                        "confidence": match["confidence"],
+                        "reasoning": match["reasoning"],
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # Only create NoMatchAnalysis if there are no matches at all
+                if not results.get("primary_match") and not results.get("supporting_matches"):
+                    if no_match := results.get("no_match_analysis"):
+                        await session.run("""
+                        MATCH (u:UseCase {id: $use_case_id})
+                        CREATE (n:NoMatchAnalysis {
+                            id: $analysis_id,
+                            reason: $reason,
+                            technical_gaps: $gaps,
+                            suggested_focus: $focus,
+                            created_at: $timestamp,
+                            analyzed_by: 'LLM_ANALYZER',
+                            status: 'NEW'
+                        })
+                        CREATE (u)-[r:HAS_ANALYSIS {created_at: $timestamp}]->(n)
+                        """, {
+                            "use_case_id": use_case_id,
+                            "analysis_id": str(uuid.uuid4()),
+                            "reason": no_match["reason"],
+                            "gaps": no_match["technical_gaps"],
+                            "focus": no_match["suggested_focus"],
+                            "timestamp": datetime.now().isoformat()
+                        })
 
         except Exception as e:
-            logger.error(f"Error in suggest_improvements: {str(e)}")
-            return self._get_default_improvement_response(category)
-
-    def _get_default_improvement_response(self, category: Dict) -> Dict:
-        """Get a default response structure for improvements with category details."""
-        return {
-            "definition_updates": {
-                "current": category.get('definition', 'No definition available'),
-                "suggested": "No suggestions available",
-                "reasoning": "Unable to analyze category",
-                "impact_analysis": {
-                    "clarity": "No analysis available",
-                    "coverage": "No analysis available",
-                    "precision": "No analysis available"
-                }
-            },
-            "keyword_updates": {
-                "add": [],
-                "remove": [],
-                "modify": [],
-                "reasoning": "No keyword analysis available"
-            },
-            "capability_updates": {
-                "add": [],
-                "remove": [],
-                "modify": [],
-                "reasoning": "No capability analysis available"
-            },
-            "business_term_updates": {
-                "add": [],
-                "remove": [],
-                "context_improvements": [],
-                "reasoning": "No business term analysis available"
-            },
-            "match_criteria_updates": {
-                "threshold_adjustments": {
-                    "confidence": 0.5,
-                    "keyword_weight": 0.33,
-                    "semantic_weight": 0.33
-                },
-                "scoring_weights": {
-                    "technical": 0.4,
-                    "business": 0.3,
-                    "context": 0.3
-                },
-                "reasoning": "No criteria analysis available",
-                "expected_impact": {
-                    "false_positives": "Unknown",
-                    "false_negatives": "Unknown",
-                    "overall_accuracy": "Unknown"
-                }
-            }
-        } 
+            logger.error(f"Error saving classification results: {str(e)}")
+            raise 
