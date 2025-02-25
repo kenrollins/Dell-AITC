@@ -38,11 +38,12 @@ class LLMAnalyzer:
             await self.client.aclose()
 
     async def _cleanup_existing_classifications(self, use_case_id: str, session) -> None:
-        """Remove existing classifications for a use case before adding new ones."""
+        """Remove existing NO MATCH classifications for a use case before adding new ones."""
         try:
-            # Delete existing CLASSIFIED_AS relationships
+            # Only delete NO MATCH classifications
             await session.run("""
-            MATCH (u:UseCase {id: $use_case_id})-[r:CLASSIFIED_AS]->()
+            MATCH (u:UseCase {id: $use_case_id})-[r:CLASSIFIED_AS]->(c:AICategory)
+            WHERE c.name = 'NO MATCH'
             DELETE r
             """, {"use_case_id": use_case_id})
             
@@ -52,9 +53,9 @@ class LLMAnalyzer:
             DELETE r, n
             """, {"use_case_id": use_case_id})
             
-            logger.info(f"Cleaned up existing classifications for use case {use_case_id}")
+            logger.info(f"Cleaned up NO MATCH classifications for use case {use_case_id}")
         except Exception as e:
-            logger.error(f"Error cleaning up existing classifications: {str(e)}")
+            logger.error(f"Error cleaning up NO MATCH classifications: {str(e)}")
             raise
             
     async def analyze_use_case(self, use_case: Dict[str, Any], categories: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -97,6 +98,14 @@ Remember to respond ONLY with valid JSON matching the format specified in the pr
                 response_text = response_text.strip()
                 
                 result = json.loads(response_text)
+                
+                # Ensure no_match_analysis has all required fields if present
+                if "no_match_analysis" in result:
+                    result["no_match_analysis"] = {
+                        "reason": result["no_match_analysis"].get("reason", "No reason provided"),
+                        "technical_gaps": result["no_match_analysis"].get("technical_gaps", []),
+                        "suggested_focus": result["no_match_analysis"].get("suggested_focus", "No suggestions provided")
+                    }
             except (KeyError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to parse Ollama response: {str(e)}")
                 logger.error(f"Raw response: {result}")
@@ -226,27 +235,23 @@ Provide your analysis in JSON format:
 Classification Guidelines:
 1. Primary Match (Required if any good match exists):
    - Must be the SINGLE most appropriate category
-   - Should have confidence > 0.8
+   - Must have confidence >= 0.90
    - Must align with core technical requirements
    - Provide specific technical justification with examples from use case
 
 2. Supporting Matches (Optional, up to 2):
    - Categories that complement the primary category
-   - Should have confidence > 0.6
+   - Must have confidence between 0.80 - 0.89
    - Explain specific technical integration points
    - Detail how they enhance the primary category's capabilities
 
 3. Related Matches (Optional):
    - Categories with tangential relevance
-   - Should have confidence > 0.4
+   - Must have confidence between 0.70 - 0.79
    - Explain potential technical synergies
    - Note specific future integration possibilities
 
-4. No Match Analysis (Required if no primary match):
-   - Explain specific technical gaps
-   - List missing capabilities
-   - Suggest concrete technical focus areas
-   - Note any partial matches
+Note: Do not include any matches with confidence below 0.70.
 
 Analysis Focus:
 - Technical alignment with category definitions

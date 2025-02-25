@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Ensure conda environment is properly activated
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate Dell-AITC
+
+# Set project paths
+export PROJECT_ROOT="/data/anaconda/Dell-AITC"
+export DATA_DIR="$PROJECT_ROOT/data"
+export INPUT_DIR="$DATA_DIR/input"
+export OUTPUT_DIR="$DATA_DIR/output"
+
+# Create Python wrapper script
+cat > ~/.dell_aitc_python << 'EOF'
+#!/bin/bash
+
+# Get the project root from environment
+PROJECT_ROOT="${PROJECT_ROOT:-/data/anaconda/Dell-AITC}"
+
+# Set up environment
+export PYTHONPATH="$PROJECT_ROOT"
+
+# Execute conda Python with all arguments
+exec /home/rollik/anaconda3/envs/Dell-AITC/bin/python "$@"
+EOF
+
+# Make wrapper executable
+chmod +x ~/.dell_aitc_python
+
+# Source any local overrides
+[[ -f ~/.cursorrc.local ]] && source ~/.cursorrc.local
+
+# Create a function that uses the wrapper
+python() {
+    ~/.dell_aitc_python "$@"
+}
+
+# Export the function so it's available to subshells
+export -f python
+
+# Print environment info for verification
+echo "Cursor environment initialized:"
+echo "Working directory: $(pwd)"
+echo "Python: ~/.dell_aitc_python"
+~/.dell_aitc_python --version 
