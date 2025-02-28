@@ -19,6 +19,10 @@ matplotlib>=3.5.0
 seaborn>=0.12.0
 numpy>=1.20.0
 
+# Partner analysis dependencies
+aiohttp>=3.8.0
+playwright>=1.30.0
+
 # Testing dependencies
 pytest>=7.0.0
 pytest-cov>=4.0.0
@@ -28,4 +32,11 @@ docker>=6.0.0
 black>=23.0.0
 flake8>=6.0.0
 mypy>=1.0.0
-types-all>=1.0.0  # Type stubs for common packages 
+# Removing problematic types-all package
+# types-all>=1.0.0  # Type stubs for common packages 
+
+# Individual type stubs (more reliable than types-all)
+types-requests>=2.0.0
+types-PyYAML>=6.0.0
+types-setuptools>=65.0.0
+types-tabulate>=0.9.0 
