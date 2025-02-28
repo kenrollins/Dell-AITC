@@ -34,6 +34,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r scripts/requirements.txt
+        # Install mypy without types-all
         pip install black flake8 mypy
         
     - name: Check code formatting with Black
@@ -46,6 +47,8 @@ jobs:
         
     - name: Type checking with mypy
       run: |
+        # Install specific type stubs needed for mypy
+        pip install types-requests types-PyYAML types-setuptools types-tabulate
         mypy scripts/
         
     - name: Run tests
