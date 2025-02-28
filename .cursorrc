@@ -1,24 +1,27 @@
 #!/bin/bash
 
-# Ensure conda environment is properly activated
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate Dell-AITC
-
 # Set project paths
 export PROJECT_ROOT="/data/anaconda/Dell-AITC"
 export DATA_DIR="$PROJECT_ROOT/data"
 export INPUT_DIR="$DATA_DIR/input"
 export OUTPUT_DIR="$DATA_DIR/output"
 
-# Create Python wrapper script
+# Create Python wrapper script that preserves conda functionality
 cat > ~/.dell_aitc_python << 'EOF'
 #!/bin/bash
 
 # Get the project root from environment
 PROJECT_ROOT="${PROJECT_ROOT:-/data/anaconda/Dell-AITC}"
 
-# Set up environment
-export PYTHONPATH="$PROJECT_ROOT"
+# Set up environment - add project root to PYTHONPATH but don't override it completely
+if [[ -n "$PYTHONPATH" ]]; then
+    # Add project root to PYTHONPATH if it's not already there
+    if [[ ":$PYTHONPATH:" != *":$PROJECT_ROOT:"* ]]; then
+        export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+    fi
+else
+    export PYTHONPATH="$PROJECT_ROOT"
+fi
 
 # Execute conda Python with all arguments
 exec /home/rollik/anaconda3/envs/Dell-AITC/bin/python "$@"
@@ -27,16 +30,49 @@ EOF
 # Make wrapper executable
 chmod +x ~/.dell_aitc_python
 
+# Create conda wrapper script that works in Cursor
+cat > ~/.dell_aitc_conda << 'EOF'
+#!/bin/bash
+
+# Ensure conda can find its modules
+unset PYTHONHOME
+
+# Preserve PYTHONPATH but ensure conda's paths are included
+CONDA_PYTHONPATH="/home/rollik/anaconda3/lib/python3.10/site-packages"
+if [[ -n "$PYTHONPATH" ]]; then
+    # Add conda path to PYTHONPATH if it's not already there
+    if [[ ":$PYTHONPATH:" != *":$CONDA_PYTHONPATH:"* ]]; then
+        export PYTHONPATH="$CONDA_PYTHONPATH:$PYTHONPATH"
+    fi
+else
+    export PYTHONPATH="$CONDA_PYTHONPATH"
+fi
+
+# Set minimal environment for conda to work
+export CONDA_EXE="/home/rollik/anaconda3/bin/conda"
+export CONDA_PYTHON_EXE="/home/rollik/anaconda3/bin/python"
+
+# Run the real conda command
+exec "/home/rollik/anaconda3/bin/conda" "$@"
+EOF
+
+# Make conda wrapper executable
+chmod +x ~/.dell_aitc_conda
+
 # Source any local overrides
 [[ -f ~/.cursorrc.local ]] && source ~/.cursorrc.local
 
-# Create a function that uses the wrapper
-python() {
+# Define functions that use the wrappers
+function python() {
     ~/.dell_aitc_python "$@"
 }
 
-# Export the function so it's available to subshells
-export -f python
+function conda() {
+    ~/.dell_aitc_conda "$@"
+}
+
+# Set the conda environment name in the prompt
+export CONDA_DEFAULT_ENV="Dell-AITC"
 
 # Print environment info for verification
 echo "Cursor environment initialized:"

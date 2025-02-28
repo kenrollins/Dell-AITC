@@ -1,7 +1,70 @@
-# Scripts Directory Structure
+# Scripts Directory
+
+This directory contains utility scripts for the Dell-AITC project.
 
 ## Overview
 This directory contains all scripts for managing, initializing, and analyzing the Dell-AITC system.
+
+## Partner Analysis Scripts
+
+### partner_analysis.py
+
+Analyzes partners against AI technology categories and generates structured analysis results.
+
+```bash
+# Run analysis on all partners
+python scripts/partner_analysis.py --output-format both
+
+# Run analysis on a limited number of partners
+python scripts/partner_analysis.py --limit 5 --output-format both
+
+# Specify a different model
+python scripts/partner_analysis.py --ollama-model deepseek-r1:70b
+```
+
+### analyze_partner_results.py
+
+Generates comprehensive summary reports from partner analysis results.
+
+```bash
+# Generate a Word document report (recommended for presentations)
+python scripts/analyze_partner_results.py --output-format word
+
+# Generate a Markdown report
+python scripts/analyze_partner_results.py --output-format markdown
+
+# Specify a different input file
+python scripts/analyze_partner_results.py --input-file path/to/consolidated.csv --output-format word
+```
+
+## Wrapper Scripts
+
+### run_partner_analysis.sh
+
+Wrapper script for running partner_analysis.py with proper environment setup.
+
+```bash
+# Run analysis on all partners
+bash scripts/run_partner_analysis.sh --output-format both
+
+# Run analysis on a limited number of partners
+bash scripts/run_partner_analysis.sh --limit 5 --output-format both
+```
+
+### run_analysis_report.sh
+
+Wrapper script for running analyze_partner_results.py with proper environment setup.
+
+```bash
+# Generate a Word document report (default)
+bash scripts/run_analysis_report.sh
+
+# Generate a Markdown report
+bash scripts/run_analysis_report.sh markdown
+
+# Specify additional options
+bash scripts/run_analysis_report.sh word --min-confidence 0.8
+```
 
 ## Directory Structure
 
@@ -24,12 +87,17 @@ scripts/
 │   ├── classifiers/         # AI classification scripts
 │   ├── evaluators/          # Evaluation scripts
 │   └── reporters/          # Reporting scripts
+├── partner_analysis.py     # Partner analysis script
+├── analyze_partner_results.py # Partner analysis results summary script
+├── run_partner_analysis.sh  # Wrapper for partner_analysis.py
+├── run_analysis_report.sh   # Wrapper for analyze_partner_results.py
 └── tests/                  # Test scripts
     ├── database/           # Database tests
     │   ├── test_reset.py   # Tests for database reset
     │   └── test_schema.py  # Tests for schema initialization
     ├── analysis/           # Analysis tests
     └── conftest.py         # pytest configuration
+```
 
 ## Usage
 
@@ -44,6 +112,10 @@ scripts/
 - All tests are located in the `tests/` directory
 - Run tests using pytest: `pytest scripts/tests/`
 - Each major component has its own test directory
+
+## Environment Setup
+
+If you encounter issues with conda or Python environment, use the wrapper scripts which properly set up the environment before running the Python scripts.
 
 ## Development Guidelines
 

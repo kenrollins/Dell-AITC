@@ -1,0 +1,1456 @@
+#!/usr/bin/env python3
+"""
+Partner Analysis Script
+
+This script analyzes partners to determine which AI technology categories they match with.
+It uses a combination of bootstrap information, website content, and search results to
+generate an analysis of the partner's capabilities.
+
+Usage:
+    python partner_analysis.py [options]
+
+Options:
+    --limit N                  Limit the number of partners to process
+    --csv-file FILE            Path to the CSV file containing partner data
+    --categories-file FILE     Path to the CSV file containing AI technology categories
+    --output-dir DIR           Directory to save output files
+    --output-format FORMAT     Output format (json or csv)
+    --ollama-url URL           URL for Ollama API
+    --ollama-model MODEL       Model to use for Ollama analysis
+    --bootstrap-model MODEL    Model to use for bootstrap information
+    --openai-model MODEL       Model to use for OpenAI
+    --openai-primary           Use OpenAI as primary model
+    --openai-fallback          Use OpenAI as fallback model
+    --skip-website             Skip fetching website content
+    --skip-search              Skip Brave search enhancement
+    --skip-github              Skip GitHub search enhancement
+    --verbose                  Enable verbose logging
+    --debug                    Enable debug logging
+"""
+
+import os
+import re
+import csv
+import json
+import time
+import logging
+import asyncio
+import argparse
+import datetime
+import traceback
+import urllib.parse
+from typing import Dict, List, Any, Optional, Union
+
+import aiohttp
+import openai
+from playwright.async_api import async_playwright
+
+# Default models
+DEFAULT_BOOTSTRAP_MODEL = "llama3:8b-instruct-fp16"
+DEFAULT_ANALYSIS_MODEL = "llama3:8b-instruct-fp16"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+
+# Default URLs
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+# Default paths
+DEFAULT_OUTPUT_DIR = "data/output/partner_analysis"
+DEFAULT_CATEGORIES_FILE = "data/input/AI-Technology-Categories-v1.4.csv"
+DEFAULT_PARTNERS_FILE = "data/input/partners.csv"
+
+def _identify_relevant_categories_semantic(bootstrap_info, categories, text_processor):
+    """Identify relevant categories using semantic matching with enhanced accuracy"""
+    # Extract key information from bootstrap info
+    key_technologies = bootstrap_info.get("key_technologies", [])
+    key_capabilities = bootstrap_info.get("key_capabilities", [])
+    summary = bootstrap_info.get("summary", "")
+    primary_business = bootstrap_info.get("primary_business", "")
+    partner_name = bootstrap_info.get("partner_name", "")
+    
+    # Combine all text for semantic matching
+    partner_text = f"{partner_name} {summary} {primary_business} {' '.join(key_technologies)} {' '.join(key_capabilities)}"
+    
+    # Find most similar categories using enhanced methods (hybrid similarity + cross-encoder verification)
+    similar_categories = text_processor.find_most_similar_categories(
+        partner_text, 
+        categories, 
+        top_n=8,
+        use_cross_encoder=True,  # Use cross-encoder for higher accuracy
+        use_hybrid=True          # Use hybrid similarity (semantic + keyword)
+    )
+    
+    # Calculate adaptive threshold based on similarity scores
+    similarity_scores = [score for _, score in similar_categories]
+    threshold = text_processor.calculate_adaptive_threshold(
+        similarity_scores, 
+        base_threshold=0.4,  # Lower base threshold to catch more potential matches
+        percentile=60        # Use 60th percentile for adaptive threshold
+    )
+    
+    # Filter categories by adaptive threshold
+    filtered_categories = [(name, score) for name, score in similar_categories if score >= threshold]
+    
+    # Log the results with threshold information
+    logging.info(f"Semantic matching results for {partner_name} (adaptive threshold: {threshold:.4f}):")
+    for category, score in similar_categories:
+        status = "SELECTED" if score >= threshold else "below threshold"
+        logging.info(f"  - {category}: {score:.4f} ({status})")
+    
+    # Return category names that meet the threshold
+    return [name for name, score in filtered_categories]
+
+def _create_bootstrap_prompt(partner):
+    """Create a bootstrap prompt for the partner."""
+    print(f"CREATING BOOTSTRAP PROMPT FOR {partner.get('partner_name', 'Unknown Partner')}")
+    prompt = f"""
+    Task: Extract key information about {partner.get('partner_name', 'the partner')} to help analyze their AI capabilities.
+    
+    Partner Name: {partner.get('partner_name', 'Unknown')}
+    Website: {partner.get('website_url', 'Not provided')}
+    
+    Please extract the following information in JSON format:
+    1. partner_name: The name of the partner
+    2. primary_business: A brief description of their primary business focus
+    3. key_technologies: A list of key AI technologies they use or develop
+    4. key_capabilities: A list of key AI capabilities they offer
+    5. target_industries: A list of industries they primarily serve
+    6. notable_products: A list of their notable AI products or solutions
+    7. summary: A brief summary of their AI capabilities
+    
+    Return ONLY the JSON object without any additional text.
+    """
+    return prompt
+
+def _create_focused_analysis_prompt(bootstrap_info, categories, website_content=None):
+    """Create a focused prompt for analyzing a partner against AI technology categories."""
+    
+    # Extract information from bootstrap info
+    partner_name = bootstrap_info.get("partner_name", "Unknown Partner")
+    primary_business = bootstrap_info.get("primary_business", "Unknown")
+    key_technologies = bootstrap_info.get("key_technologies", [])
+    key_capabilities = bootstrap_info.get("key_capabilities", [])
+    target_industries = bootstrap_info.get("target_industries", [])
+    notable_products = bootstrap_info.get("notable_products", [])
+    summary = bootstrap_info.get("summary", "")
+    
+    # Format the categories
+    categories_text = "\n".join([f"- {category}" for category in categories])
+    
+    # Format the key technologies and capabilities
+    technologies_text = ", ".join(key_technologies) if key_technologies else "Unknown"
+    capabilities_text = ", ".join(key_capabilities) if key_capabilities else "Unknown"
+    industries_text = ", ".join(target_industries) if target_industries else "Unknown"
+    products_text = ", ".join(notable_products) if notable_products else "Unknown"
+    
+    # Include website content if available
+    website_section = ""
+    if website_content:
+        website_section = f"""
+WEBSITE CONTENT:
+{website_content}
+"""
+    
+    # Create the prompt
+    prompt = f"""
+You are an AI technology analyst specializing in categorizing companies based on their AI capabilities.
+
+TASK:
+Analyze the company "{partner_name}" and determine which AI technology categories from the list below best match their offerings.
+
+COMPANY INFORMATION:
+- Name: {partner_name}
+- Primary Business: {primary_business}
+- Key Technologies: {technologies_text}
+- Key Capabilities: {capabilities_text}
+- Target Industries: {industries_text}
+- Notable Products: {products_text}
+- Summary: {summary}
+{website_section}
+
+AI TECHNOLOGY CATEGORIES:
+{categories_text}
+
+INSTRUCTIONS:
+1. Analyze the company information against each AI technology category.
+2. Identify which categories are most relevant to the company's offerings.
+3. For each matched category, provide:
+   - The category name exactly as listed above
+   - A confidence score (0.0 to 1.0) indicating how strongly the company matches this category
+   - Evidence supporting why this category matches the company's offerings
+
+RESPONSE FORMAT:
+Provide your analysis in a valid JSON format with the following structure:
+
+```json
+{{
+  "partner_name": "{partner_name}",
+  "matched_categories": [
+    {{
+      "category": "Category Name",
+      "confidence": 0.85,
+      "evidence": "Clear explanation of why this category matches"
+    }}
+  ]
+}}
+```
+
+IMPORTANT JSON FORMATTING RULES:
+1. Use double quotes (") for all strings and property names
+2. Use numbers (not strings) for confidence scores (e.g., 0.85 not "0.85" or "85%")
+3. Do not use trailing commas
+4. Ensure all brackets and braces are properly closed
+5. Escape any double quotes within strings with a backslash (\\")
+6. Keep the JSON structure exactly as shown above
+7. Do not add any explanatory text before or after the JSON
+8. Return ONLY the JSON object, nothing else
+
+EXAMPLE VALID RESPONSE:
+```json
+{{
+  "partner_name": "Example AI",
+  "matched_categories": [
+    {{
+      "category": "Natural Language Processing",
+      "confidence": 0.9,
+      "evidence": "Their flagship product uses advanced NLP for text analysis and sentiment detection."
+    }},
+    {{
+      "category": "AI Development & Operations",
+      "confidence": 0.75,
+      "evidence": "They offer a complete platform for developing and deploying AI models."
+    }}
+  ]
+}}
+```
+
+Please provide your analysis now as a single, valid JSON object.
+"""
+    
+    return prompt
+
+def _create_analysis_prompt(partner, bootstrap_info, website_content, ai_categories):
+    """Create an analysis prompt for a partner."""
+    print(f"Creating analysis prompt for {partner}")
+    
+    # Format the AI categories
+    categories_text = "\n".join([f"{i+1}. {cat['name']}: {cat['description']}" for i, cat in enumerate(ai_categories)])
+    
+    # Format the bootstrap information
+    bootstrap_text = json.dumps(bootstrap_info, indent=2) if bootstrap_info else "No bootstrap information available."
+    
+    # Format the website content
+    website_text = ""
+    if website_content:
+        website_text = f"""
+WEBSITE TITLE: {website_content.get('title', 'N/A')}
+WEBSITE DESCRIPTION: {website_content.get('description', 'N/A')}
+WEBSITE CONTENT: {website_content.get('content', 'N/A')[:5000]}
+"""
+    else:
+        website_text = "No website content available."
+    
+    # Create the analysis prompt
+    prompt = f"""
+You are an expert technology analyst specializing in AI capabilities assessment. Your task is to analyze the partner "{partner}" and determine which AI technology categories they match with based on their capabilities.
+
+Here is the information about the partner:
+
+BOOTSTRAP INFORMATION:
+{bootstrap_text}
+
+WEBSITE INFORMATION:
+{website_text}
+
+Here are the AI technology categories to consider:
+{categories_text}
+
+Based on the information provided, analyze which AI technology categories the partner matches with. For each matching category, provide:
+1. A confidence score (0.0 to 1.0) indicating how strongly the partner matches with the category
+2. Evidence from the provided information that supports the match
+
+Return your analysis in the following JSON format:
+{{
+  "partner_name": "{partner}",
+  "matched_categories": [
+    {{
+      "category": "Category Name",
+      "confidence": 0.95,
+      "evidence": "Specific evidence from the provided information that supports this match"
+    }},
+    ...
+  ]
+}}
+
+Only include categories where you have found evidence of a match. Rank the matched categories by confidence score in descending order.
+"""
+    
+    return prompt
+
+async def _get_brave_search_results(partner_name, category, max_results=5, max_retries=3):
+    """Get search results from Brave Search API for additional evidence."""
+    try:
+        # Check for Brave Search API key in environment variables
+        brave_api_key = os.environ.get("BRAVE_API_KEY")
+        if not brave_api_key:
+            logging.warning("Brave Search API key not found in environment variables")
+            return []
+        
+        # Construct the search query
+        query = f"{partner_name} {category} AI technology capabilities"
+        
+        # Set up the API request
+        url = "https://api.search.brave.com/res/v1/web/search"
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": brave_api_key
+        }
+        params = {
+            "q": query,
+            "count": max_results,
+            "search_lang": "en",
+            "safesearch": "moderate"
+        }
+        
+        # Implement exponential backoff for rate limiting
+        for retry in range(max_retries):
+            try:
+                # Make the API request
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers, params=params) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Extract relevant information from search results
+                            results = []
+                            if "web" in data and "results" in data["web"]:
+                                for result in data["web"]["results"]:
+                                    # Extract title, description, and URL
+                                    title = result.get("title", "")
+                                    description = result.get("description", "")
+                                    url = result.get("url", "")
+                                    
+                                    # Create a formatted result
+                                    formatted_result = {
+                                        "title": title,
+                                        "description": description,
+                                        "url": url,
+                                        "source": "brave_search",
+                                        "query": query
+                                    }
+                                    results.append(formatted_result)
+                            
+                            logging.info(f"Retrieved {len(results)} Brave search results for {partner_name} - {category}")
+                            return results
+                        elif response.status == 429:
+                            # Rate limited - implement exponential backoff
+                            wait_time = (2 ** retry) * 1.5  # Exponential backoff: 1.5, 3, 6 seconds
+                            logging.warning(f"Brave Search API rate limited. Retrying in {wait_time} seconds (attempt {retry+1}/{max_retries})")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            logging.warning(f"Brave Search API returned status code {response.status}")
+                            # For other errors, wait a bit before retrying
+                            if retry < max_retries - 1:
+                                await asyncio.sleep(1)
+                            else:
+                                return []
+            except aiohttp.ClientError as e:
+                logging.error(f"Brave Search API request error: {str(e)}")
+                if retry < max_retries - 1:
+                    await asyncio.sleep(1)
+                else:
+                    return []
+        
+        # If we've exhausted all retries
+        logging.error(f"Failed to get Brave search results after {max_retries} attempts")
+        return []
+    except Exception as e:
+        logging.error(f"Error getting Brave search results: {str(e)}")
+        return []
+
+async def _get_github_search_results(partner_name: str, query: str, session: Optional[aiohttp.ClientSession] = None) -> List[Dict]:
+    """Search GitHub repositories for partner information.
+    
+    Args:
+        partner_name: Name of the partner to search for
+        query: Additional search terms
+        session: Optional aiohttp session to use
+    
+    Returns:
+        List of GitHub repository results
+    """
+    results = []
+    
+    # Ensure query is not None and is a string
+    if query is None:
+        logging.warning("GitHub search received None query")
+        query = ""
+    
+    # Create multiple search queries for better coverage
+    search_queries = []
+    
+    # Basic search if query is not empty
+    if query.strip():
+        search_queries.append(f"{query} in:name,description,readme")
+        
+        # Only add this if we have both partner name and query
+        if partner_name.strip() and len(query.split()) > 0:
+            search_queries.append(f"{partner_name} {query.split()[0]} in:name,description,readme")
+    
+    # Always add this general search if we have a partner name
+    if partner_name.strip():
+        search_queries.append(f"{partner_name} AI technology in:readme")
+    
+    # If we have no valid queries, return empty results
+    if not search_queries:
+        logging.warning("No valid GitHub search queries could be constructed")
+        return []
+    
+    # Create a session if one wasn't provided
+    close_session = False
+    if session is None:
+        session = aiohttp.ClientSession()
+        close_session = True
+    
+    try:
+        for search_query in search_queries:
+            logging.debug(f"Searching GitHub with query: {search_query}")
+            
+            # Add retry logic with exponential backoff
+            max_retries = 3
+            retry_count = 0
+            retry_delay = 1
+            
+            while retry_count <= max_retries:
+                try:
+                    async with session.get(
+                        "https://api.github.com/search/repositories",
+                        params={"q": search_query, "sort": "stars", "order": "desc"},
+                        headers={"Accept": "application/vnd.github.v3+json"}
+                    ) as response:
+                        if response.status == 429:  # Rate limited
+                            retry_count += 1
+                            if retry_count <= max_retries:
+                                wait_time = retry_delay * (2 ** (retry_count - 1))
+                                logging.warning(f"GitHub API rate limited. Retrying in {wait_time} seconds...")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                logging.error("GitHub API rate limit exceeded and max retries reached")
+                                break
+                        
+                        if response.status != 200:
+                            logging.warning(f"GitHub API returned status {response.status} for query: {search_query}")
+                            break
+                            
+                        data = await response.json()
+                        
+                        # Process each repository
+                        for repo in data.get("items", [])[:3]:  # Top 3 results per query
+                            # Skip if we already have this repo
+                            if any(r["title"] == repo["name"] for r in results):
+                                continue
+                                
+                            # Get additional repo details - languages used
+                            languages = {}
+                            try:
+                                async with session.get(
+                                    repo["languages_url"],
+                                    headers={"Accept": "application/vnd.github.v3+json"}
+                                ) as lang_response:
+                                    if lang_response.status == 200:
+                                        languages = await lang_response.json()
+                            except Exception as e:
+                                logging.warning(f"Error fetching languages for {repo['name']}: {e}")
+                            
+                            # Get README content for more context
+                            readme_content = ""
+                            try:
+                                async with session.get(
+                                    f"https://api.github.com/repos/{repo['full_name']}/readme",
+                                    headers={"Accept": "application/vnd.github.v3.raw"}
+                                ) as readme_response:
+                                    if readme_response.status == 200:
+                                        readme_content = await readme_response.text()
+                                        # Limit readme length
+                                        readme_content = readme_content[:1000] + "..." if len(readme_content) > 1000 else readme_content
+                            except Exception as e:
+                                logging.warning(f"Error fetching README for {repo['name']}: {e}")
+                            
+                            # Calculate relevance score
+                            relevance_score = _calculate_github_relevance(repo, query, partner_name)
+                            
+                            results.append({
+                                "title": repo["name"],
+                                "full_name": repo.get("full_name", ""),
+                                "description": repo.get("description", ""),
+                                "stars": repo.get("stargazers_count", 0),
+                                "forks": repo.get("forks_count", 0),
+                                "link": repo["html_url"],
+                                "languages": languages,
+                                "readme_excerpt": readme_content,
+                                "last_updated": repo.get("updated_at", ""),
+                                "created_at": repo.get("created_at", ""),
+                                "relevance_score": relevance_score,
+                                "query": search_query
+                            })
+                        
+                        # Success, break retry loop
+                        break
+                        
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        wait_time = retry_delay * (2 ** (retry_count - 1))
+                        logging.warning(f"GitHub search error: {str(e)}. Retrying in {wait_time} seconds...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logging.error(f"GitHub search error after max retries: {str(e)}")
+                        break
+        
+        # Sort by relevance score and limit to top 5 overall
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return results[:5]
+        
+    except Exception as e:
+        logging.error(f"GitHub search error: {str(e)}")
+        return []
+    finally:
+        if close_session:
+            await session.close()
+
+def _calculate_github_relevance(repo: Dict, query: str, partner_name: str) -> float:
+    """Calculate relevance score for a repository based on various factors."""
+    score = 0.0
+    
+    # Base score from stars (max 5 points)
+    stars = repo.get("stargazers_count", 0)
+    if stars > 1000:
+        score += 5.0
+    elif stars > 500:
+        score += 4.0
+    elif stars > 100:
+        score += 3.0
+    elif stars > 50:
+        score += 2.0
+    elif stars > 10:
+        score += 1.0
+    
+    # Recent activity bonus (max 2 points)
+    try:
+        last_updated = datetime.strptime(repo.get("updated_at", ""), "%Y-%m-%dT%H:%M:%SZ")
+        days_since_update = (datetime.now() - last_updated).days
+        if days_since_update < 30:
+            score += 2.0
+        elif days_since_update < 90:
+            score += 1.0
+        elif days_since_update < 180:
+            score += 0.5
+    except Exception as e:
+        logging.debug(f"Error calculating date relevance: {e}")
+    
+    # Keyword relevance in name/description (max 3 points)
+    name_desc = (repo.get("name", "") + " " + repo.get("description", "")).lower()
+    query_terms = query.lower().split()
+    matches = sum(1 for term in query_terms if term in name_desc)
+    score += min(3.0, matches * 0.5)
+    
+    # Partner name in repo (bonus 2 points)
+    if partner_name.lower() in name_desc:
+        score += 2.0
+        
+    return score
+
+async def _enhance_bootstrap_info_with_github(bootstrap_info):
+    """Enhance bootstrap information with GitHub repository search results."""
+    partner_name = bootstrap_info.get("partner_name", "")
+    key_technologies = bootstrap_info.get("key_technologies", [])
+    key_capabilities = bootstrap_info.get("key_capabilities", [])
+    
+    # Skip if no partner name
+    if not partner_name:
+        logging.warning("No partner name found in bootstrap info, skipping GitHub search enhancement")
+        return bootstrap_info
+    
+    # Create a copy of the bootstrap info
+    enhanced_info = bootstrap_info.copy()
+    
+    # Initialize GitHub search results
+    if "github_search_results" not in enhanced_info:
+        enhanced_info["github_search_results"] = {}
+    
+    # Create a shared session for all requests
+    async with aiohttp.ClientSession() as session:
+        # Search tasks to run
+        search_tasks = []
+        
+        # Add search tasks for each key technology
+        for technology in key_technologies:
+            search_tasks.append(_get_github_search_results(partner_name, technology, session))
+        
+        # Add search tasks for each key capability
+        for capability in key_capabilities:
+            search_tasks.append(_get_github_search_results(partner_name, capability, session))
+        
+        # Add general AI search
+        search_tasks.append(_get_github_search_results(partner_name, "AI", session))
+        
+        # Execute all search tasks concurrently
+        all_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        
+        # Process results
+        valid_results = []
+        for result in all_results:
+            if isinstance(result, Exception):
+                logging.error(f"Error in GitHub search: {str(result)}")
+                continue
+            valid_results.extend(result)
+        
+        # Organize results by search term and extract insights
+        discovered_technologies = set(key_technologies)
+        discovered_capabilities = set(key_capabilities)
+        
+        for repo in valid_results:
+            # Add to results by query
+            query = repo.get("query", "")
+            search_term = query.replace(partner_name, "").replace("in:name,description,readme", "").replace("AI technology in:readme", "AI").strip()
+            
+            if search_term not in enhanced_info["github_search_results"]:
+                enhanced_info["github_search_results"][search_term] = []
+            
+            enhanced_info["github_search_results"][search_term].append(repo)
+            
+            # Extract technologies from languages
+            languages = repo.get("languages", {})
+            for language in languages.keys():
+                if language not in ["HTML", "CSS", "JavaScript"] and language not in discovered_technologies:
+                    discovered_technologies.add(language)
+                    logging.info(f"Discovered new technology from GitHub: {language}")
+            
+            # Extract insights from README
+            readme = repo.get("readme_excerpt", "").lower()
+            description = repo.get("description", "").lower()
+            combined_text = f"{description} {readme}"
+            
+            # Look for technology mentions
+            tech_patterns = [
+                r"using ([\w\s]+) for",
+                r"built with ([\w\s]+)",
+                r"powered by ([\w\s]+)",
+                r"leverages ([\w\s]+) to",
+                r"based on ([\w\s]+)"
+            ]
+            
+            for pattern in tech_patterns:
+                matches = re.findall(pattern, combined_text)
+                for match in matches:
+                    if len(match) > 3 and match not in discovered_technologies:
+                        discovered_technologies.add(match)
+                        logging.info(f"Discovered new technology from GitHub README: {match}")
+            
+            # Look for capability mentions
+            capability_patterns = [
+                r"enables ([\w\s]+)",
+                r"provides ([\w\s]+)",
+                r"supports ([\w\s]+)",
+                r"capable of ([\w\s]+)",
+                r"features include ([\w\s]+)"
+            ]
+            
+            for pattern in capability_patterns:
+                matches = re.findall(pattern, combined_text)
+                for match in matches:
+                    if len(match) > 5 and match not in discovered_capabilities:
+                        discovered_capabilities.add(match)
+                        logging.info(f"Discovered new capability from GitHub README: {match}")
+    
+    # Update the bootstrap info with discovered technologies and capabilities
+    enhanced_info["key_technologies"] = list(discovered_technologies)
+    enhanced_info["key_capabilities"] = list(discovered_capabilities)
+    
+    # Log enhancement summary
+    total_repos = len(valid_results)
+    logging.info(f"Enhanced bootstrap info with {total_repos} GitHub repositories")
+    logging.info(f"Technologies after GitHub enhancement: {len(enhanced_info['key_technologies'])}")
+    logging.info(f"Capabilities after GitHub enhancement: {len(enhanced_info['key_capabilities'])}")
+    
+    return enhanced_info
+
+def _save_analysis_results(analysis, partner_name, output_format):
+    """Save analysis results to file."""
+    print(f"SAVING ANALYSIS RESULTS FOR: {partner_name}")
+    
+    # Create timestamp for filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Save as JSON
+    if output_format in ["json", "both"]:
+        json_dir = os.path.join(DEFAULT_OUTPUT_DIR, "partner_analysis")
+        os.makedirs(json_dir, exist_ok=True)
+        
+        # Clean partner name for filename
+        clean_name = re.sub(r'[^\w\-\.]', '_', partner_name.lower())
+        
+        # Create filename
+        json_file = os.path.join(json_dir, f"{clean_name}_{timestamp}.json")
+        
+        # Save to file
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(analysis, f, indent=4)
+        
+        logging.info(f"Saved analysis to {json_file}")
+        print(f"SAVED ANALYSIS TO: {json_file}")
+    
+    # Save as CSV
+    if output_format in ["csv", "both"]:
+        csv_dir = os.path.join(DEFAULT_OUTPUT_DIR, "partner_analysis_csv")
+        os.makedirs(csv_dir, exist_ok=True)
+        
+        # Clean partner name for filename
+        clean_name = re.sub(r'[^\w\-\.]', '_', partner_name.lower())
+        
+        # Create filename
+        csv_file = os.path.join(csv_dir, f"{clean_name}_{timestamp}.csv")
+        
+        # Save to file
+        with open(csv_file, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            
+            # Write header
+            writer.writerow(["partner_name", "category", "confidence", "evidence"])
+            
+            # Write data
+            for category in analysis.get("matched_categories", []):
+                writer.writerow([
+                    analysis.get("partner_name", ""),
+                    category.get("category", ""),
+                    category.get("confidence", 0),
+                    category.get("evidence", "")
+                ])
+        
+        logging.info(f"Saved analysis to {csv_file}")
+        print(f"SAVED ANALYSIS TO: {csv_file}")
+
+def _load_ai_categories(categories_file):
+    """Load AI technology categories from a CSV file."""
+    print(f"Loading AI technology categories from: {categories_file}")
+    
+    categories = []
+    
+    try:
+        with open(categories_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                category = {
+                    "name": row.get("Category", "").strip(),
+                    "description": row.get("Description", "").strip(),
+                    "examples": row.get("Examples", "").strip()
+                }
+                if category["name"]:
+                    categories.append(category)
+    except Exception as e:
+        print(f"Error loading AI technology categories: {str(e)}")
+        return []
+    
+    print(f"Loaded {len(categories)} AI technology categories")
+    return categories
+
+def _load_partners_from_csv(csv_file, limit=None):
+    """Load partners from a CSV file."""
+    print(f"Loading partners from CSV file: {csv_file}")
+    
+    partners = []
+    
+    try:
+        with open(csv_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                partner_name = row.get("partner_name", "").strip()
+                if partner_name:
+                    partners.append(row)
+                    if limit and len(partners) >= limit:
+                        break
+    except Exception as e:
+        print(f"Error loading partners from CSV file: {str(e)}")
+        return []
+    
+    print(f"Loaded {len(partners)} partners from CSV file")
+    return partners
+
+async def _enhance_bootstrap_info_with_brave_search(bootstrap_info):
+    """Enhance bootstrap information with Brave Search results."""
+    partner_name = bootstrap_info.get("partner_name", "")
+    key_technologies = bootstrap_info.get("key_technologies", [])
+    key_capabilities = bootstrap_info.get("key_capabilities", [])
+    
+    # Skip if no partner name
+    if not partner_name:
+        logging.warning("No partner name found in bootstrap info, skipping Brave search enhancement")
+        return bootstrap_info
+    
+    # Create a copy of the bootstrap info
+    enhanced_info = bootstrap_info.copy()
+    
+    # Initialize brave search results
+    if "brave_search_results" not in enhanced_info:
+        enhanced_info["brave_search_results"] = {}
+    
+    # Track all discovered technologies and capabilities
+    discovered_technologies = set(key_technologies)
+    discovered_capabilities = set(key_capabilities)
+    
+    # Search queries to run
+    search_tasks = []
+    
+    # Add search tasks for each key technology
+    for technology in key_technologies:
+        search_tasks.append(_get_brave_search_results(partner_name, technology))
+    
+    # Add search tasks for each key capability
+    for capability in key_capabilities:
+        search_tasks.append(_get_brave_search_results(partner_name, capability))
+    
+    # Add general AI capabilities search
+    search_tasks.append(_get_brave_search_results(partner_name, "AI capabilities"))
+    
+    # Add search for emerging technologies
+    emerging_tech_terms = ["generative AI", "large language models", "computer vision", 
+                          "multimodal AI", "responsible AI", "AI ethics"]
+    for term in emerging_tech_terms:
+        if not any(term.lower() in tech.lower() for tech in key_technologies):
+            search_tasks.append(_get_brave_search_results(partner_name, term))
+    
+    # Execute all search tasks concurrently
+    all_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+    
+    # Process results
+    valid_results = []
+    for result in all_results:
+        if isinstance(result, Exception):
+            logging.error(f"Error in Brave search: {str(result)}")
+            continue
+        valid_results.extend(result)
+    
+    # Organize results by search term
+    for result in valid_results:
+        query = result.get("query", "")
+        search_term = query.replace(partner_name, "").replace("AI technology capabilities", "").strip()
+        
+        if search_term not in enhanced_info["brave_search_results"]:
+            enhanced_info["brave_search_results"][search_term] = []
+        
+        enhanced_info["brave_search_results"][search_term].append(result)
+    
+    # Extract potential new technologies and capabilities from search results
+    for result in valid_results:
+        description = result.get("description", "").lower()
+        title = result.get("title", "").lower()
+        combined_text = f"{title} {description}"
+        
+        # Check for technology mentions
+        for tech in emerging_tech_terms:
+            if tech.lower() in combined_text and tech not in discovered_technologies:
+                discovered_technologies.add(tech)
+                logging.info(f"Discovered new technology from Brave search: {tech}")
+        
+        # Check for capability mentions
+        capability_indicators = ["enables", "provides", "offers", "supports", "capable of", "specializes in"]
+        for indicator in capability_indicators:
+            if indicator in combined_text:
+                # Extract the phrase after the indicator
+                idx = combined_text.find(indicator) + len(indicator)
+                if idx < len(combined_text):
+                    phrase = combined_text[idx:idx+50].strip()  # Get next 50 chars
+                    # Truncate at the next period or comma
+                    for punct in ['.', ',']:
+                        if punct in phrase:
+                            phrase = phrase.split(punct)[0].strip()
+                    
+                    if len(phrase) > 5 and phrase not in discovered_capabilities:
+                        discovered_capabilities.add(phrase)
+                        logging.info(f"Discovered new capability from Brave search: {phrase}")
+    
+    # Update the bootstrap info with discovered technologies and capabilities
+    enhanced_info["key_technologies"] = list(discovered_technologies)
+    enhanced_info["key_capabilities"] = list(discovered_capabilities)
+    
+    # Log enhancement summary
+    total_results = len(valid_results)
+    logging.info(f"Enhanced bootstrap info with {total_results} Brave search results")
+    logging.info(f"Technologies after enhancement: {len(enhanced_info['key_technologies'])}")
+    logging.info(f"Capabilities after enhancement: {len(enhanced_info['key_capabilities'])}")
+    
+    return enhanced_info
+
+async def _get_website_content(url):
+    """Get website content using Playwright for JavaScript rendering."""
+    print(f"FETCHING WEBSITE CONTENT: {url}")
+    
+    if not url:
+        print("NO URL PROVIDED")
+        return None
+    
+    try:
+        # Initialize Playwright
+        async with async_playwright() as p:
+            # Launch browser
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            page = await context.new_page()
+            
+            # Navigate to the URL
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            
+            # Get page content
+            title = await page.title()
+            content = await page.content()
+            
+            # Extract text content using BeautifulSoup
+            soup = BeautifulSoup(content, "html.parser")
+            
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.extract()
+            
+            # Get text content
+            text = soup.get_text()
+            
+            # Clean up text
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = "\n".join(chunk for chunk in chunks if chunk)
+            
+            # Get meta description
+            description = ""
+            meta_desc = soup.find("meta", attrs={"name": "description"})
+            if meta_desc:
+                description = meta_desc.get("content", "")
+            
+            # Close browser
+            await browser.close()
+            
+            # Return website content
+            return {
+                "title": title,
+                "description": description,
+                "content": text,
+                "url": url
+            }
+    except Exception as e:
+        logging.error(f"Error getting website content: {str(e)}")
+        print(f"ERROR GETTING WEBSITE CONTENT: {str(e)}")
+        return None
+
+async def main():
+    """Main function."""
+    print("MAIN FUNCTION STARTED")
+    
+    # Parse command-line arguments
+    args = _parse_args()
+    print(f"ARGS: {args}")
+    
+    # Load AI technology categories
+    categories = _load_ai_categories(args.categories_file)
+    print(f"LOADED {len(categories)} AI TECHNOLOGY CATEGORIES")
+    
+    # Load partners from CSV
+    partners = _load_partners_from_csv(args.csv_file, limit=args.limit)
+    print(f"LOADED {len(partners)} PARTNERS")
+    
+    # Process each partner
+    for partner in partners:
+        partner_name = partner.get("partner_name", "").strip()
+        if not partner_name:
+            print("SKIPPING PARTNER WITH NO NAME")
+            continue
+            
+        print(f"PROCESSING PARTNER: {partner_name}")
+        
+        # Get website content if available
+        website_content = None
+        if not args.skip_website:
+            website_url = partner.get("website_url", f"https://{partner_name}")
+            print(f"GETTING WEBSITE CONTENT FOR: {website_url}")
+            website_content = await _get_website_content(website_url)
+        
+        # Get bootstrap information
+        bootstrap_info = await _get_bootstrap_info(partner_name, args.openai_primary)
+        if bootstrap_info:
+            print(f"BOOTSTRAP INFO OBTAINED FOR: {partner_name}")
+        else:
+            print(f"FAILED TO GET BOOTSTRAP INFO FOR: {partner_name}")
+        
+        # Get search results if available
+        search_results = []
+        if not args.skip_search:
+            print(f"GETTING SEARCH RESULTS FOR: {partner_name}")
+            search_results = await _get_brave_search_results(partner_name, max_retries=3)
+            print(f"OBTAINED {len(search_results)} SEARCH RESULTS FOR: {partner_name}")
+        
+        # Get GitHub search results if available
+        github_results = []
+        if not args.skip_github:
+            print(f"GETTING GITHUB RESULTS FOR: {partner_name}")
+            github_results = await _search_github(partner_name)
+            print(f"OBTAINED {len(github_results)} GITHUB RESULTS FOR: {partner_name}")
+        
+        # Get analysis
+        analysis = None
+        
+        # Try Ollama first unless OpenAI is primary
+        if not args.openai_primary:
+            print(f"GETTING OLLAMA ANALYSIS FOR: {partner_name}")
+            analysis = await _get_analysis_ollama(partner_name, bootstrap_info, website_content, categories)
+        
+        # Fall back to OpenAI if Ollama fails or OpenAI is primary
+        if analysis is None and (args.openai_fallback or args.openai_primary):
+            print(f"GETTING OPENAI ANALYSIS FOR: {partner_name}")
+            analysis = await _get_analysis_openai(partner_name, bootstrap_info, website_content, categories)
+        
+        # Save analysis results
+        if analysis:
+            print(f"ANALYSIS OBTAINED FOR: {partner_name}")
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(args.output_dir, exist_ok=True)
+            
+            # Generate timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Save analysis results
+            if args.output_format == "json":
+                output_file = os.path.join(args.output_dir, f"{partner_name}_{timestamp}.json")
+                with open(output_file, "w") as f:
+                    json.dump(analysis, f, indent=2)
+                print(f"SAVED ANALYSIS RESULTS TO: {output_file}")
+            elif args.output_format == "csv":
+                output_file = os.path.join(args.output_dir, f"{partner_name}_{timestamp}.csv")
+                with open(output_file, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Partner", "Category", "Confidence", "Evidence"])
+                    for category in analysis.get("matched_categories", []):
+                        writer.writerow([
+                            partner_name,
+                            category.get("category", ""),
+                            category.get("confidence", 0),
+                            category.get("evidence", "")
+                        ])
+                print(f"SAVED ANALYSIS RESULTS TO: {output_file}")
+        else:
+            print(f"FAILED TO GET ANALYSIS FOR: {partner_name}")
+    
+    print("MAIN FUNCTION COMPLETED")
+
+class OllamaClient:
+    """Client for interacting with Ollama API."""
+    
+    def __init__(self, model_name=DEFAULT_BOOTSTRAP_MODEL, host="http://localhost:11434"):
+        """Initialize the Ollama client."""
+        self.model_name = model_name
+        self.host = host
+        self.api_url = f"{host}/api/generate"
+        print(f"Initialized Ollama client with model: {model_name}")
+    
+    async def generate(self, prompt):
+        """Generate a response from Ollama."""
+        try:
+            headers = {"Content-Type": "application/json"}
+            data = {
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": False
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.api_url, headers=headers, json=data) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        print(f"Ollama API returned status code {response.status}: {error_text}")
+                        raise Exception(f"Ollama API returned status code {response.status}")
+                    
+                    result = await response.json()
+                    return result.get("response", "")
+        except Exception as e:
+            print(f"Error generating response from Ollama: {str(e)}")
+            raise
+
+class OpenAIClient:
+    """Client for interacting with OpenAI API."""
+    
+    def __init__(self, model_name):
+        self.model_name = model_name
+        # Set up OpenAI API key
+        openai.api_key = os.environ.get("OPENAI_API_KEY")
+        print(f"INITIALIZED OPENAI CLIENT: {model_name}")
+    
+    async def generate(self, prompt):
+        """Generate a response from OpenAI."""
+        print(f"GENERATING RESPONSE FROM OPENAI: {self.model_name}")
+    
+        # Set up the request
+        try:
+            # Log the request
+            logging.info(f"Sending generation request to OpenAI (attempt 1/3)")
+            logging.debug(f"Prompt length: {len(prompt)} characters")
+            
+            # Make the request
+            response = await openai.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert technology analyst specializing in AI capabilities assessment."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.2
+            )
+            
+            # Log the response
+            logging.info(f"Received response from OpenAI (length: {len(response.choices[0].message.content)} characters)")
+            logging.debug(f"Response preview: {response.choices[0].message.content[:100]}...")
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"Error generating response from OpenAI: {str(e)}")
+            print(f"ERROR GENERATING RESPONSE FROM OPENAI: {str(e)}")
+            return None
+
+def parse_llm_json_response(response_text):
+    """
+    Parse JSON from LLM response text with multiple fallback mechanisms.
+    
+    This function implements several strategies to extract valid JSON from LLM responses:
+    1. Try to parse the entire response as JSON
+    2. Look for JSON between triple backticks
+    3. Look for JSON between single backticks
+    4. Look for JSON between curly braces
+    5. Try to fix common JSON formatting issues and retry
+    
+    Args:
+        response_text (str): The raw text response from an LLM
+        
+    Returns:
+        dict: The parsed JSON object or None if parsing fails
+    """
+    if not response_text:
+        logging.error("Empty response received from LLM")
+        return None
+    
+    # Strategy 1: Try to parse the entire response as JSON
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        logging.debug("Could not parse entire response as JSON, trying alternative methods")
+    
+    # Strategy 2: Look for JSON between triple backticks
+    json_pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+    matches = re.findall(json_pattern, response_text)
+    
+    for match in matches:
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 3: Look for JSON between single backticks
+    json_pattern = r"`([\s\S]*?)`"
+    matches = re.findall(json_pattern, response_text)
+    
+    for match in matches:
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 4: Look for JSON between curly braces (outermost pair)
+    try:
+        # Find the first opening brace and the last closing brace
+        start_idx = response_text.find('{')
+        end_idx = response_text.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            json_str = response_text[start_idx:end_idx+1]
+            return json.loads(json_str)
+    except json.JSONDecodeError:
+        logging.debug("Could not parse JSON between curly braces")
+    
+    # Strategy 5: Try to fix common JSON formatting issues and retry
+    try:
+        # Replace single quotes with double quotes (common LLM mistake)
+        fixed_text = re.sub(r"'([^']*)':\s*'([^']*)'", r'"\1": "\2"', response_text)
+        fixed_text = re.sub(r"'([^']*)':\s*\[", r'"\1": [', fixed_text)
+        fixed_text = re.sub(r"'([^']*)'", r'"\1"', fixed_text)
+        
+        # Find JSON-like structure
+        start_idx = fixed_text.find('{')
+        end_idx = fixed_text.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            json_str = fixed_text[start_idx:end_idx+1]
+            return json.loads(json_str)
+    except (json.JSONDecodeError, Exception) as e:
+        logging.error(f"All JSON parsing strategies failed: {str(e)}")
+    
+    logging.error("Failed to parse JSON from LLM response")
+    return None
+
+async def _get_bootstrap_info_ollama(partner, model_name=DEFAULT_BOOTSTRAP_MODEL):
+    """Get bootstrap information for a partner using Ollama."""
+    print(f"Getting bootstrap information for {partner} using Ollama")
+    
+    # Create the bootstrap prompt
+    bootstrap_prompt = _create_bootstrap_prompt(partner)
+    
+    # Initialize the Ollama client
+    ollama_client = OllamaClient(model_name=model_name)
+    
+    try:
+        # Generate the bootstrap response
+        bootstrap_response = await ollama_client.generate(bootstrap_prompt)
+        print(f"Received bootstrap response for {partner} (length: {len(bootstrap_response)} characters)")
+        
+        # Parse the bootstrap response
+        bootstrap_info = parse_llm_json_response(bootstrap_response)
+        
+        if bootstrap_info:
+            print(f"Successfully parsed bootstrap information for {partner}")
+            return bootstrap_info
+        else:
+            print(f"Failed to parse bootstrap information for {partner}")
+            return None
+    except Exception as e:
+        print(f"Error getting bootstrap information for {partner}: {str(e)}")
+        return None
+
+async def _get_bootstrap_info_openai(partner, model_name=DEFAULT_OPENAI_MODEL):
+    """Get bootstrap information for a partner using OpenAI."""
+    print(f"Getting bootstrap information for {partner} using OpenAI")
+    
+    # Create the bootstrap prompt
+    bootstrap_prompt = _create_bootstrap_prompt(partner)
+    
+    # Initialize the OpenAI client
+    openai_client = OpenAIClient(model_name=model_name)
+    
+    try:
+        # Generate the bootstrap response
+        bootstrap_response = await openai_client.generate(bootstrap_prompt)
+        print(f"Received bootstrap response for {partner} (length: {len(bootstrap_response)} characters)")
+        
+        # Parse the bootstrap response
+        bootstrap_info = parse_llm_json_response(bootstrap_response)
+        
+        if bootstrap_info:
+            print(f"Successfully parsed bootstrap information for {partner}")
+            return bootstrap_info
+        else:
+            print(f"Failed to parse bootstrap information for {partner}")
+            return None
+    except Exception as e:
+        print(f"Error getting bootstrap information for {partner}: {str(e)}")
+        return None
+
+async def _get_bootstrap_info(partner, use_openai=False):
+    """Get bootstrap information for a partner."""
+    if use_openai:
+        return await _get_bootstrap_info_openai(partner)
+    else:
+        return await _get_bootstrap_info_ollama(partner)
+
+async def _get_analysis_ollama(partner, bootstrap_info, website_content, ai_categories, model_name=DEFAULT_ANALYSIS_MODEL):
+    """Get analysis for a partner using Ollama."""
+    print(f"Getting analysis for {partner} using Ollama")
+    
+    # Create the analysis prompt
+    analysis_prompt = _create_analysis_prompt(partner, bootstrap_info, website_content, ai_categories)
+    
+    # Initialize the Ollama client
+    ollama_client = OllamaClient(model_name=model_name)
+    
+    try:
+        # Generate the analysis response
+        analysis_response = await ollama_client.generate(analysis_prompt)
+        print(f"Received analysis response for {partner} (length: {len(analysis_response)} characters)")
+        
+        # Parse the analysis response
+        analysis_result = parse_llm_json_response(analysis_response)
+        
+        if analysis_result:
+            print(f"Successfully parsed analysis for {partner}")
+            return analysis_result
+        else:
+            print(f"Failed to parse analysis for {partner}")
+            return None
+    except Exception as e:
+        print(f"Error getting analysis for {partner}: {str(e)}")
+        return None
+
+async def _get_analysis_openai(partner, bootstrap_info, website_content, ai_categories, model_name=DEFAULT_OPENAI_MODEL):
+    """Get analysis for a partner using OpenAI."""
+    print(f"Getting analysis for {partner} using OpenAI")
+    
+    # Create the analysis prompt
+    analysis_prompt = _create_analysis_prompt(partner, bootstrap_info, website_content, ai_categories)
+    
+    # Initialize the OpenAI client
+    openai_client = OpenAIClient(model_name=model_name)
+    
+    try:
+        # Generate the analysis response
+        analysis_response = await openai_client.generate(analysis_prompt)
+        print(f"Received analysis response for {partner} (length: {len(analysis_response)} characters)")
+        
+        # Parse the analysis response
+        analysis_result = parse_llm_json_response(analysis_response)
+        
+        if analysis_result:
+            print(f"Successfully parsed analysis for {partner}")
+            return analysis_result
+        else:
+            print(f"Failed to parse analysis for {partner}")
+            return None
+    except Exception as e:
+        print(f"Error getting analysis for {partner}: {str(e)}")
+        return None
+
+async def _get_analysis(partner, bootstrap_info, website_content, ai_categories, use_openai=False):
+    """Get analysis for a partner."""
+    if use_openai:
+        return await _get_analysis_openai(partner, bootstrap_info, website_content, ai_categories)
+    else:
+        return await _get_analysis_ollama(partner, bootstrap_info, website_content, ai_categories)
+
+async def _search_github(vendor_name, max_retries=3):
+    """
+    Search GitHub for repositories related to the vendor.
+    
+    Args:
+        vendor_name (str): The name of the vendor to search for
+        max_retries (int): Maximum number of retry attempts for rate limiting
+        
+    Returns:
+        list: A list of search results
+    """
+    if not vendor_name:
+        logging.warning("Vendor name is None, skipping GitHub search")
+        return []
+    
+    print(f"Searching GitHub for: {vendor_name}")
+    
+    # Construct multiple search queries for better coverage
+    search_queries = [
+        f"{vendor_name} in:name",  # Repositories with vendor name in repo name
+        f"{vendor_name} in:description",  # Repositories with vendor name in description
+        f"{vendor_name} in:readme",  # Repositories with vendor name in readme
+        f"{vendor_name} in:topics",  # Repositories with vendor name in topics
+    ]
+    
+    all_results = []
+    
+    for query in search_queries:
+        if not query:
+            continue
+            
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}&sort=stars&order=desc&per_page=10"
+                headers = {"Accept": "application/vnd.github.v3+json"}
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            results = data.get("items", [])
+                            
+                            # Extract relevant information
+                            for repo in results:
+                                all_results.append({
+                                    "name": repo.get("name"),
+                                    "full_name": repo.get("full_name"),
+                                    "description": repo.get("description"),
+                                    "url": repo.get("html_url"),
+                                    "stars": repo.get("stargazers_count"),
+                                    "forks": repo.get("forks_count"),
+                                    "language": repo.get("language"),
+                                    "topics": repo.get("topics", []),
+                                    "source": "github"
+                                })
+                            
+                            # Break out of retry loop on success
+                            break
+                        elif response.status == 403:
+                            # Rate limiting, wait and retry
+                            retry_count += 1
+                            wait_time = 2 ** retry_count  # Exponential backoff
+                            logging.warning(f"GitHub API rate limit exceeded. Waiting {wait_time} seconds before retry {retry_count}/{max_retries}")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logging.warning(f"GitHub API returned status code {response.status}")
+                            break
+            except Exception as e:
+                logging.error(f"Error searching GitHub: {str(e)}")
+                break
+    
+    print(f"Found {len(all_results)} GitHub results for {vendor_name}")
+    return all_results
+
+def _parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Process partners and generate analysis results.")
+    
+    # Input/output options
+    parser.add_argument("--limit", type=int, default=None, help="Limit the number of partners to process")
+    parser.add_argument("--csv-file", type=str, default="data/input/partners.csv", help="Path to the CSV file containing partner data")
+    parser.add_argument("--categories-file", type=str, default="data/input/AI-Technology-Categories-v1.4.csv", help="Path to the CSV file containing AI technology categories")
+    parser.add_argument("--output-dir", type=str, default="data/output/partner_analysis", help="Directory to save output files")
+    parser.add_argument("--output-format", type=str, default="json", choices=["json", "csv"], help="Output format (json or csv)")
+    
+    # Model options
+    parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="URL for Ollama API")
+    parser.add_argument("--ollama-model", type=str, default=DEFAULT_ANALYSIS_MODEL, help="Model to use for Ollama analysis")
+    parser.add_argument("--bootstrap-model", type=str, default=DEFAULT_BOOTSTRAP_MODEL, help="Model to use for bootstrap information")
+    parser.add_argument("--openai-model", type=str, default=DEFAULT_OPENAI_MODEL, help="Model to use for OpenAI")
+    parser.add_argument("--openai-primary", action="store_true", help="Use OpenAI as primary model")
+    parser.add_argument("--openai-fallback", action="store_true", help="Use OpenAI as fallback model")
+    
+    # Feature flags
+    parser.add_argument("--skip-website", action="store_true", help="Skip fetching website content")
+    parser.add_argument("--skip-search", action="store_true", help="Skip Brave search enhancement")
+    parser.add_argument("--skip-github", action="store_true", help="Skip GitHub search enhancement")
+    
+    # Logging options
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else (logging.INFO if args.verbose else logging.WARNING)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler("partner_analysis.log"),
+            logging.StreamHandler()
+        ]
+    )
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    return args
+
+if __name__ == "__main__":
+    print("SCRIPT ENTRY POINT REACHED")
+    
+    try:
+        # Run the main async function
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Interrupted by user")
+    except Exception as e:
+        print(f"Error in main function: {str(e)}")
+        traceback.print_exc()
+    finally:
+        print("Cleaning up resources")

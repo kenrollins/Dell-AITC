@@ -11,6 +11,13 @@ numpy>=1.20
 matplotlib>=3.0
 seaborn>=0.12
 tqdm>=4.0
+hjson>=3.1.0  # For more forgiving JSON parsing
+
+# Analysis dependencies
+pandas>=2.0
+matplotlib>=3.5.0
+seaborn>=0.12.0
+numpy>=1.20.0
 
 # Testing dependencies
 pytest>=7.0.0
