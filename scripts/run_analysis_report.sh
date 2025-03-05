@@ -1,25 +1,34 @@
 #!/bin/bash
 
-# Set project root
-export PROJECT_ROOT="/data/anaconda/Dell-AITC"
+# Set the project root
+PROJECT_ROOT="/data/anaconda/Dell-AITC"
 
 # Activate conda environment
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate Dell-AITC
 
 # Ensure we're in the project root
-cd "${PROJECT_ROOT}"
+cd $PROJECT_ROOT
 
 # Unset problematic Python variables
 unset PYTHONPATH
 unset PYTHONHOME
 unset PYTHONSTARTUP
 
-# Default to Word format if not specified
+# Default to Word format unless specified otherwise
 FORMAT=${1:-word}
 
-# Run the analyze_partner_results.py script with the provided arguments
-python scripts/analyze_partner_results.py --output-format $FORMAT "${@:2}"
+# Check if we need to run the partner analysis script first
+if [ -z "$(ls -A data/output/partner_analysis/partner_analysis_*.csv 2>/dev/null)" ]; then
+  echo "No consolidated CSV file found. Running partner analysis with consolidation..."
+  python scripts/partner_analysis.py --consolidate
+fi
 
-echo "Report generation complete!"
-echo "You can find the report in the data/output/partner_analysis directory." 
+# Run the analysis
+echo "Generating partner analysis report..."
+python scripts/analyze_partner_results.py \
+  --output-format $FORMAT \
+  --output-dir data/output/partner_analysis
+
+echo "Partner analysis report generation complete."
+echo "Report saved to data/output/partner_analysis/partner_summary_*.${FORMAT}" 

@@ -26,6 +26,7 @@ Options:
     --skip-github              Skip GitHub search enhancement
     --verbose                  Enable verbose logging
     --debug                    Enable debug logging
+    --consolidate              Generate a consolidated CSV file from all JSON files in the output directory
 """
 
 import os
@@ -38,6 +39,8 @@ import argparse
 import datetime
 import traceback
 import urllib.parse
+import glob
+import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple
 
 import aiohttp
@@ -147,6 +150,13 @@ def _parse_args():
     # Logging options
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+
+    # Add consolidate argument
+    parser.add_argument(
+        "--consolidate",
+        action="store_true",
+        help="Generate a consolidated CSV file from all JSON files in the output directory.",
+    )
 
     args = parser.parse_args()
 
@@ -916,6 +926,103 @@ async def _get_analysis(
         )
 
 
+def consolidate_json_to_csv(output_dir):
+    """
+    Generate a consolidated CSV file from all JSON files in the output directory.
+    
+    Args:
+        output_dir (str): Path to the directory containing JSON files
+        
+    Returns:
+        str: Path to the consolidated CSV file
+    """
+    logging.info("Consolidating JSON files to CSV...")
+    
+    # Find all JSON files in the output directory
+    json_files = glob.glob(os.path.join(output_dir, "*.json"))
+    
+    if not json_files:
+        logging.warning("No JSON files found in the output directory.")
+        return None
+    
+    # Define the core fields for the CSV
+    core_fields = [
+        "partner_name", "primary_business", "summary", 
+        "key_technologies", "key_capabilities", "target_industries", 
+        "notable_products", "matched_categories", "analysis_model",
+        "bootstrap_model", "data_sources", "github_repos_count",
+        "top_github_repo", "top_github_stars"
+    ]
+    
+    # List to store all results
+    all_results = []
+    
+    # Process each JSON file
+    for json_file in json_files:
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+            
+            # Extract partner data
+            result_entry = {
+                "partner_name": data.get("partner_name", ""),
+                "primary_business": data.get("primary_business", ""),
+                "summary": data.get("summary", ""),
+                "key_technologies": ", ".join(data.get("key_technologies", [])),
+                "key_capabilities": ", ".join(data.get("key_capabilities", [])),
+                "target_industries": ", ".join(data.get("target_industries", [])),
+                "notable_products": ", ".join(data.get("notable_products", [])),
+                "matched_categories": data.get("matched_categories", []),
+            }
+            
+            # Extract metadata
+            metadata = data.get("analysis_metadata", {})
+            result_entry.update({
+                "analysis_model": metadata.get("analysis_model", ""),
+                "bootstrap_model": metadata.get("bootstrap_model", ""),
+                "data_sources": ", ".join(metadata.get("data_sources", [])),
+                "github_repos_count": metadata.get("github_repos_count", 0),
+                "top_github_repo": metadata.get("top_github_repo", ""),
+                "top_github_stars": metadata.get("top_github_stars", 0)
+            })
+            
+            # Process matched categories
+            matched_categories = result_entry.get("matched_categories", [])
+            for category in matched_categories:
+                category_name = category.get("category", "")
+                confidence = category.get("confidence", 0)
+                result_entry[f"{category_name}_confidence"] = confidence
+                
+                # Add evidence as a separate column
+                evidence = category.get("evidence", "")
+                if isinstance(evidence, list):
+                    evidence = ", ".join(evidence)
+                result_entry[f"{category_name}_evidence"] = evidence
+            
+            all_results.append(result_entry)
+            logging.info(f"Processed {os.path.basename(json_file)}")
+            
+        except Exception as e:
+            logging.error(f"Error processing {json_file}: {str(e)}")
+    
+    if not all_results:
+        logging.warning("No valid results found in JSON files.")
+        return None
+    
+    # Create DataFrame
+    df = pd.DataFrame(all_results)
+    
+    # Generate timestamp for the consolidated file
+    consolidated_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    consolidated_csv_file = os.path.join(output_dir, f"partner_analysis_{consolidated_timestamp}.csv")
+    
+    # Save to CSV
+    df.to_csv(consolidated_csv_file, index=False)
+    logging.info(f"Consolidated CSV saved to {consolidated_csv_file}")
+    
+    return consolidated_csv_file
+
+
 async def main():
     """
     Main function to process partners and generate AI technology analysis.
@@ -1018,15 +1125,38 @@ async def main():
 
                 # Write detailed analysis to JSON file
                 partner_file = os.path.join(
-                    args.output_dir, f"{partner['partner_name'].replace('/', '_')}.json"
+                    args.output_dir, f"{partner['partner_name'].replace('/', '_')}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 )
                 with open(partner_file, "w") as f:
+                    # Create a comprehensive JSON structure that includes all required fields
+                    partner_data = {
+                        "partner_name": partner['partner_name'],
+                        "matched_categories": analysis.get("matched_categories", []),
+                        "primary_business": bootstrap_info.get("primary_business", ""),
+                        "summary": bootstrap_info.get("summary", ""),
+                        "key_technologies": bootstrap_info.get("key_technologies", []),
+                        "key_capabilities": bootstrap_info.get("key_capabilities", []),
+                        "target_industries": bootstrap_info.get("target_industries", []),
+                        "notable_products": bootstrap_info.get("notable_products", []),
+                        "analysis_metadata": {
+                            "timestamp": datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+                            "analysis_model": args.ollama_model if not args.openai_primary else args.openai_model,
+                            "bootstrap_model": args.bootstrap_model,
+                            "data_sources": ["website" if website_content else None, 
+                                            "search" if search_results else None, 
+                                            "github" if github_results else None],
+                            "search_results_count": len(search_results) if search_results else 0,
+                            "github_repos_count": len(github_results) if github_results else 0,
+                            "top_github_repo": github_results[0].get("full_name", "") if github_results and len(github_results) > 0 else "",
+                            "top_github_stars": github_results[0].get("stars", 0) if github_results and len(github_results) > 0 else 0
+                        }
+                    }
+                    
+                    # Remove None values from data_sources
+                    partner_data["analysis_metadata"]["data_sources"] = [source for source in partner_data["analysis_metadata"]["data_sources"] if source]
+                    
                     json.dump(
-                        {
-                            "partner": partner,
-                            "bootstrap_info": bootstrap_info,
-                            "analysis": analysis,
-                        },
+                        partner_data,
                         f,
                         indent=2,
                     )
@@ -1042,6 +1172,10 @@ async def main():
             traceback.print_exc()
 
     logging.info("Analysis complete")
+
+    # Generate consolidated CSV from JSON files
+    if args.consolidate:
+        consolidate_json_to_csv(args.output_dir)
 
 
 if __name__ == "__main__":
